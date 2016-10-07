@@ -1,5 +1,27 @@
 iD.TelenavLayer = function (context) {
 
+    // automated deploy constants - BEGIN
+    var PRODUCTION_API_PATHS = false;
+    var TEST_API_SERVER_OW_SERVER = 'http://fcd-ss.skobbler.net:2680/directionOfFlowService_test';
+    var TEST_API_SERVER_MR_SERVER = 'http://fcd-ss.skobbler.net:2680/missingGeoService_test';
+    var TEST_API_SERVER_TR_SERVER = 'http://fcd-ss.skobbler.net:2680/turnRestrictionService_test';
+
+    var PRODUCTION_API_OW_SERVER = 'http://directionofflow.skobbler.net/directionOfFlowService';
+    var PRODUCTION_API_MR_SERVER = 'http://missingroads.skobbler.net/missingGeoService';
+    var PRODUCTION_API_TR_SERVER = 'http://turnrestrictionservice.skobbler.net/turnRestrictionService';
+
+    var API_OW_SERVER, API_MR_SERVER, API_TR_SERVER;
+    if (PRODUCTION_API_PATHS) {
+        API_OW_SERVER = PRODUCTION_API_OW_SERVER;
+        API_MR_SERVER = PRODUCTION_API_MR_SERVER;
+        API_TR_SERVER = PRODUCTION_API_TR_SERVER;
+    } else {
+        API_OW_SERVER = TEST_API_SERVER_OW_SERVER;
+        API_MR_SERVER = TEST_API_SERVER_MR_SERVER;
+        API_TR_SERVER = TEST_API_SERVER_TR_SERVER;
+    }
+    // automated deploy constants - END
+
     var CLUSTER_RADIUSES = [
         [45,70,90,110],
         [40,65,85,105],
@@ -21,19 +43,16 @@ iD.TelenavLayer = function (context) {
     var enable = true, //shows the telenav layer by default
         svg,
         requestQueue = [],
-        //combinedItems = [],
-        //selectedItems = [],
 
         visibleItems = null,
 
-        status = 'OPEN',
         heatMap = null,
         requestCount;
 
     var types = {
-        dof: 'http://fcd-ss.skobbler.net:2680/directionOfFlowService_test/search',
-        mr: 'http://fcd-ss.skobbler.net:2680/missingGeoService_test/search',
-        tr: 'http://fcd-ss.skobbler.net:2680/turnRestrictionService_test/search'
+        dof: API_OW_SERVER + '/search',
+        mr: API_MR_SERVER + '/search',
+        tr: API_TR_SERVER + '/search'
     };
 
     var selectedTypes = ['dof', 'mr', 'tr'];
@@ -48,13 +67,19 @@ iD.TelenavLayer = function (context) {
 
 
     // === IMPROVE OSM HEADER logging in part === begin
-    context.connection().userDetails(function(err, user) {
-        if (!err) {
-            d3.select('#telenavHeaderLogin').classed('hidden', true);
-            d3.select('#telenavHeaderLogout').classed('hidden', false);
-            d3.select('#telenavHeaderLogout span').text('Hello ' + user.display_name + '!')
-        }
-    });
+    (function checkAuthentication() {
+        context.connection().userDetails(function(err, user) {
+            if (!err) {
+                d3.select('#telenavHeaderLogin').classed('hidden', true);
+                d3.select('#telenavHeaderLogout').classed('hidden', false);
+                d3.select('#telenavHeaderLogout span').text('Hello ' + user.display_name + '!')
+            } else {
+                d3.select('#telenavHeaderLogin').classed('hidden', false);
+                d3.select('#telenavHeaderLogout').classed('hidden', true);
+            }
+        });
+        setTimeout(checkAuthentication, 2000);
+    })();
     d3.select('#telenavHeaderLogin').on('click', function() {
         context.connection().authenticate(function(err) {
             if (err) {
@@ -125,179 +150,118 @@ iD.TelenavLayer = function (context) {
         }
         return newSegments;
     };
+    Utils.getDistance = function(p1, p2) {
 
-    // ==============================
-    // ==============================
-    // SelectedItems
-    // ==============================
-    // ==============================
-    var SelectedItems = function(items) {
-        // ---
-        this.items = items;
+        var x1 = Math.floor(context.projection([p1.lon, p1.lat])[0]);
+        var y1 = Math.floor(context.projection([p1.lon, p1.lat])[1]);
 
-        this.add = function(item) {
-            this.items.push(item);
-        };
+        var x2 = Math.floor(context.projection([p2.lon, p2.lat])[0]);
+        var y2 = Math.floor(context.projection([p2.lon, p2.lat])[1]);
 
-        this.empty = function() {
-            this.items.length = 0;
-        };
-        this.getSize = function() {
-            return this.items.length;
-        };
-        this.getItem = function(index) {
-            if (index >= this.items.length) {
-                throw new Error('SelectedItems : getItem - problem');
-            }
-            return this.items[index];
-        };
-        this.getItemById = function(id) {
-            var neededItem = null;
-            for (var i = 0; i < this.items.length; i++) {
-                if (this.items[i].id === id) {
-                    neededItem = this.items[i];
-                }
-            }
-            if (neededItem == null) {
-                throw new Error('SelectedItems : getItemById - problem');
-            }
-            return neededItem;
-        };
+        var a = x1 - x2;
+        var b = y1 - y2;
 
-        this.removeItemById = function(id) {
-            var neededItem = null;
-            for (var i = 0; i < this.items.length; i++) {
-                if (this.items[i].id === id) {
-                    this.items.splice(i, 1);
-                }
+        return Math.sqrt(a * a + b * b);
+    };
+    Utils.findMiddle = function(p1, p2, d, dif) {
+        var x1 = Math.floor(context.projection([p1.lon, p1.lat])[0]);
+        var y1 = Math.floor(context.projection([p1.lon, p1.lat])[1]);
+
+        var x2 = Math.floor(context.projection([p2.lon, p2.lat])[0]);
+        var y2 = Math.floor(context.projection([p2.lon, p2.lat])[1]);
+
+        var a = x2 - x1;
+        var b = y2 - y1;
+
+        dif = d - dif;
+
+        var newX = (a * dif) / d;
+        var newY = (b * dif) / d;
+
+        newX = newX + x1;
+        newY = newY + y1;
+
+        return '' + newX + ',' + newY;
+    };
+    Utils.getSegmentAngle = function(p1, p2) {
+        return Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
+    };
+    Utils.splitSegment = function(segment) {
+        var length = 0;
+        var distances = [];
+        for (var i = 0; i < segment.length - 1; i++) {
+            var d = Utils.getDistance(segment[i], segment[i + 1]);
+            length += d;
+            distances.push(d);
+        }
+        var target = length / 2;
+        length = 0;
+        var location = 0;
+        for (var i = 0; i < segment.length - 1; i++) {
+            length += distances[i];
+            if (length > target) {
+                location = i;
+                break;
             }
-            if (neededItem == null) {
-                throw new Error('SelectedItems : removeItemById - problem');
-            }
-            return neededItem;
+        }
+
+        var newPoint = Utils.findMiddle(
+            segment[location],
+            segment[location + 1],
+            distances[location],
+            length - target
+        );
+
+        return {
+            newPoint: newPoint,
+            index: location
         };
-
-        this.getSiblings = function(id, combinedItems) {
-            var neededItem = null;
-            for (var i = 0; i < this.items.length; i++) {
-                if (this.items[i].id === id) {
-                    neededItem = this.items[i];
-                }
-            }
-            if (neededItem == null) {
-                throw new Error('SelectedItems : getItemById - problem');
-            }
-            if (neededItem.className !== 'TurnRestrictionItem') {
-                return {
-                    siblings: [],
-                    selected: null
-                };
-            }
-            var siblings = [];
-            var selected = null;
-            for (var i = 0; i < combinedItems.length; i++) {
-                if (combinedItems[i].className !== 'TurnRestrictionItem') {
-                    continue;
-                }
-                if (
-                    (combinedItems[i].point.lat === neededItem.point.lat) &&
-                    (combinedItems[i].point.lon === neededItem.point.lon)
-                ) {
-                    if (combinedItems[i].id == neededItem.id) {
-                        selected = neededItem.id;
-                    }
-                    siblings.push(combinedItems[i]);
-                }
-            }
-
-            return {
-                siblings: siblings,
-                selected: selected
-            };
-        };
-
-        this.update = function(combinedItems) {
-            for (var i = 0; i < combinedItems.length; i++) {
-                for (var j = 0; j < this.items.length; j++) {
-                    if (combinedItems[i].id === this.items[j].id) {
-                        if (!combinedItems[i].selected) {
-                            combinedItems[i].selected = true;
-                        }
-                    }
-                }
-            }
-        };
-
     };
 
     // ==============================
     // ==============================
-    // TRNodes
+    // KeyPressHandler
     // ==============================
     // ==============================
-    var TRNodes = function(nodes) {
-        // ---
-        this.nodes = nodes;
+    var KeyPressHandler = function() {
 
-        this.render = function(combinedItems) {
-            this.update(combinedItems);
-            svg.selectAll('g.tr-node')
-                .remove();
-            for (var i = 0; i < this.nodes.length; i++) {
-                var node = this.nodes[i];
-                var cx = Math.floor(context.projection([node.lon, node.lat])[0]);
-                var cy = Math.floor(context.projection([node.lon, node.lat])[1]);
-                var gElem = svg.append('g').attr('class', 'tr-node');
-                //var circleElem = gElem.append('circle')
-                //    .attr('cx', cx)
-                //    .attr('cy', cy)
-                //    .attr('r', 10);
-                var textElem = gElem.append('text')
-                    .attr('x', cx - 5)
-                    .attr('y', cy + 7)
-                    .html(node.amount);
+        var enabled = false;
+
+        var onKeyPressed = function() {
+            switch (d3.event.keyCode) {
+                case 88:
+                    if (_editPanel.showsSiblings()) {
+                        var siblingID = _editPanel.getNextSiblingID();
+                        var item = visibleItems.getItemByID(siblingID);
+                        item.handleSelection();
+                    }
+                    break;
+                case 32:
+                    _editPanel.toggleEditable();
+                    break;
             }
         };
 
-        this.update = function(combinedItems) {
-            this.nodes.length = 0;
-            var nodeMap = {};
-            for (var i = 0; i < combinedItems.length; i++) {
-                var item = combinedItems[i];
-                if (item.className === 'TurnRestrictionItem') {
-                    var key = item.point.lat + ',' + item.point.lon;
-                    if (!nodeMap.hasOwnProperty(key)) {
-                        var siblingsFound = 0;
-                        for (var j = i + 1; j < combinedItems.length; j++) {
-                            var checkedItem = combinedItems[j];
-                            if (checkedItem.className === 'TurnRestrictionItem') {
-                                if (
-                                    (checkedItem.point.lat === item.point.lat) &&
-                                    (checkedItem.point.lon === item.point.lon)
-                                ) {
-                                    siblingsFound++;
-                                }
-                            }
-                        }
-                        if (siblingsFound > 0) {
-                            nodeMap[key] = siblingsFound + 1;
-                        }
-                    }
-                }
-            }
-            for (var key in nodeMap) {
-                if (nodeMap.hasOwnProperty(key)) {
-                    var coordinates = key.split(',');
-                    this.nodes.push({
-                        lat: parseFloat(coordinates[0]),
-                        lon: parseFloat(coordinates[1]),
-                        amount: nodeMap[key]
-                    });
-                }
-            }
+        this.enable = function() {
+            this.disable();
+            d3.select('body').on('keydown', onKeyPressed);
+            enabled = true;
+        };
+
+        this.disable = function() {
+            d3.select('body').on('keydown', null);
+            d3.select('body').on('keydown', null);
+            enabled = false;
+        };
+
+        this.isEnabled = function() {
+            return enabled;
         };
 
     };
+    var keyPressHandler = new KeyPressHandler();
+    keyPressHandler.enable();
+
 
     // ==============================
     // ==============================
@@ -308,6 +272,22 @@ iD.TelenavLayer = function (context) {
 
         this.rawItems = [];
         this.items = [];
+
+        this.normalItems = [];
+        this.clusteredItems = [];
+        this.selectedItems = [];
+
+        this.selectedClusteredItems = [];
+        this.totalSelectedItems = [];
+
+        this.getItemByID = function(id) {
+            for (var i = 0; i < this.items.length; i++) {
+                var item = this.items[i];
+                if (id === item.id) {
+                    return item;
+                }
+            }
+        };
 
         this.loadOneWays = function(rawData) {
             for (var i = 0; i < rawData.length; i++) {
@@ -333,13 +313,271 @@ iD.TelenavLayer = function (context) {
             }
         };
 
-        this.getClusteredItems = function() {
-
+        this.deselectAll = function(redraw) {
+            redraw = (redraw === true);
+            // totalSelectedItems is emptied
+            // current selection items are moved to the normal items OR to the cluster items
+            this.totalSelectedItems.length = 0;
+            for (var i = 0; i < this.selectedItems.length; i++) {
+                this.normalItems.push(this.selectedItems[i]);
+            }
+            this.selectedItems.length = 0;
+            if (redraw) {
+                render(d3.select('.layer-telenav'));
+            }
         };
-    };
+        this.unselectItem = function(itemId) {
+            // item must be removed from both total and current selection arrays
+            // item must be added to the normal items, OR to the cluster items, if inside a cluster
+            var neededItem = null;
+            var item = null;
+            for (var i = 0; i < this.totalSelectedItems.length; i++) {
+                if (this.totalSelectedItems[i].id === itemId) {
+                    item = this.totalSelectedItems[i];
+                    this.totalSelectedItems.splice(i, 1);
+                }
+            }
+            for (var i = 0; i < this.selectedItems.length; i++) {
+                if (this.selectedItems[i].id === itemId) {
+                    item = this.selectedItems[i];
+                    this.selectedItems.splice(i, 1);
+                }
+            }
+            // insert item in normal or cluster arrays
+            if (this.isItemPartOfClusters(item)) {
+                this.addItemToClusters(item);
+            }
+            render(d3.select('.layer-telenav'));
+        };
+        this.selectItem = function(item) {
+            // item must be added to both total and current selection arrays
+            // item must be removed from the normal items, OR from the cluster items, if inside a cluster
+            this.totalSelectedItems.push(item);
+            this.selectedItems.push(item);
+            // remove item from normal or cluster arrays
+            for (var i = 0; i < this.normalItems.length; i++) {
+                if (this.normalItems[i].id === item.id) {
+                    this.normalItems.splice(i , 1);
+                }
+            }
+            for (var i = 0; i < this.clusteredItems.length; i++) {
+                var checkedItem = this.clusteredItems[i];
+                // compare for equality
+                if (
+                    (checkedItem.lat === item.point.lat) &&
+                    (checkedItem.lon === item.point.lon)
+                ) {
+                    for (var j = 0; j < checkedItem.items.length; j++) {
+                        if (checkedItem.items[j].id === item.id) {
+                            checkedItem.items.splice(j , 1);
+                        }
+                    }
+                }
+            }
+            render(d3.select('.layer-telenav'));
+        };
 
-    var selectedItems2 = new SelectedItems([]);
-    var trNodes = new TRNodes([]);
+        this.isItemSelected = function(item) {
+            for (var i = 0; i < this.totalSelectedItems.length; i++) {
+                var checkedItem = this.totalSelectedItems[i];
+                if (checkedItem.id === item.id) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        this.isItemPartOfClusters = function(item) {
+            if (item.className === 'TurnRestrictionItem') {
+                var key = item.point.lat + ',' + item.point.lon;
+                for (var i = 0; i < this.clusteredItems.length; i++) {
+                    var checkedItem = this.clusteredItems[i];
+                    // compare for equality
+                    if (
+                        (checkedItem.point.lat === item.point.lat) &&
+                        (checkedItem.point.lon === item.point.lon)
+                    ) {
+                        return true;
+                    }
+                }
+                return false;
+            } else {
+                return false;
+            }
+        };
+
+        this.addItemToClusters = function(item) {
+            if (item.className === 'TurnRestrictionItem') {
+                for (var i = 0; i < this.clusteredItems.length; i++) {
+                    var checkedItem = this.clusteredItems[i];
+                    // compare for equality
+                    if (
+                        (checkedItem.lat === item.point.lat) &&
+                        (checkedItem.lon === item.point.lon)
+                    ) {
+                        checkedItem.items.push(item);
+                    }
+                }
+                throw new Error('VisibleItems::addItemToClusters - not a clustered item');
+            } else {
+                throw new Error('VisibleItems::addItemToClusters - not a clustered item');
+            }
+        };
+
+
+        this.getClusterSiblings = function(item) {
+            if (item.className !== 'TurnRestrictionItem') {
+                return null;
+            }
+            for (var i = 0; i < this.clusteredItems.length; i++) {
+                var checkedItem = this.clusteredItems[i];
+                var id = item.point.lat + ',' + item.point.lon;
+                if (checkedItem.id === id) {
+                    return {
+                        siblings: checkedItem.items,
+                        selected: item.id
+                    };
+                }
+            }
+            for (var i = 0; i < this.selectedClusteredItems.length; i++) {
+                var checkedItem = this.selectedClusteredItems[i];
+                var id = item.point.lat + ',' + item.point.lon;
+                if (checkedItem.id === id) {
+                    return {
+                        siblings: checkedItem.items,
+                        selected: item.id
+                    };
+                }
+            }
+            return null;
+        };
+
+        this.getTotalSelectionItem = function(i) {
+            if (i >= this.totalSelectedItems.length) {
+                throw new Error('SelectedItems : getItem - problem');
+            }
+            return this.totalSelectedItems[i];
+        };
+
+        this.selectionHasCluster = function() {
+            if (this.selectedClusteredItems.length > 0) {
+                return true;
+            } else {
+                return false;
+            }
+        };
+
+        this.update = function() {
+
+            // ===
+            // we need to check what items were selected before and add them to the selected group
+            // ===
+            this.normalItems.length = 0;
+            this.selectedItems.length = 0;
+            // for each new item, find out if it's already in the TOTAL selected item list
+            for (var i = 0; i < this.items.length; i++) {
+                var found = false;
+                for (var j = 0; j < this.totalSelectedItems.length; j++) {
+                    // if we find a new item that should be selected, we add it to the CURRENT selected items
+                    if (this.items[i].id === this.totalSelectedItems[j].id) {
+                        this.selectedItems.push(this.items[i]);
+                        found = true;
+                        break;
+                    }
+                }
+                // else we add it to the normalItems
+                if (!found) {
+                    this.normalItems.push(this.items[i]);
+                }
+            }
+
+            var nodeMap = {};
+            // for all items
+            for (var i = 0; i < this.items.length; i++) {
+                var item = this.items[i];
+                if (item.className === 'TurnRestrictionItem') {
+                    // build a comparison key
+                    var key = item.point.lat + ',' + item.point.lon;
+                    // if the key is a fresh one, not searched before
+                    if (!nodeMap.hasOwnProperty(key)) {
+                        var siblingsFound = [];
+                        // search other instances of the fresh key
+                        for (var j = i + 1; j < this.items.length; j++) {
+                            var checkedItem = this.items[j];
+                            if (checkedItem.className === 'TurnRestrictionItem') {
+                                // compare for equality
+                                if (
+                                    (checkedItem.point.lat === item.point.lat) &&
+                                    (checkedItem.point.lon === item.point.lon)
+                                ) {
+                                    siblingsFound.push(checkedItem);
+                                }
+                            }
+                        }
+                        // mark new found siblings
+                        if (siblingsFound.length > 0) {
+                            if (typeof nodeMap[key] === 'undefined') {
+                                nodeMap[key] = siblingsFound;
+                            }
+                            nodeMap[key].unshift(item);// check WEBEU-1122
+                        }
+                    }
+                }
+            }
+
+            // ===
+            // for every selected items, if there is a corresponding cluster, move it to selectedClusters and remove it
+            // ===
+            this.selectedClusteredItems.length = 0;
+            for (var i = 0; i < this.selectedItems.length; i++) {
+                var item = this.selectedItems[i];
+                if (item.className === 'TurnRestrictionItem') {
+                    var key = item.point.lat + ',' + item.point.lon;
+                    if (nodeMap.hasOwnProperty(key)) {
+                        //nodeMap[key].unshift(item); // check WEBEU-1122
+                        this.selectedClusteredItems.push(new ClusteredItem({
+                            lat: item.point.lat,
+                            lon: item.point.lon,
+                            items: nodeMap[key]
+                        }));
+                        delete nodeMap[key];
+                    }
+                }
+            }
+
+            this.clusteredItems.length = 0;
+            // iterating the map and building the cluster elements
+            for (var key in nodeMap) {
+                if (nodeMap.hasOwnProperty(key)) {
+                    var coordinates = key.split(',');
+                    this.clusteredItems.push(new ClusteredItem({
+                        lat: parseFloat(coordinates[0]),
+                        lon: parseFloat(coordinates[1]),
+                        items: nodeMap[key]
+                    }));
+                }
+            }
+
+            // we finally need to remove the cluster items from the normal items
+            var normalItems = [];
+            for (var i = 0; i < this.normalItems.length; i++) {
+                var item = this.normalItems[i];
+                if (item.className === 'TurnRestrictionItem') {
+                    // build a comparation key
+                    var key = item.point.lat + ',' + item.point.lon;
+                    // if the key does not exists (the item is not part of a cluster), we keep it
+                    if (!nodeMap.hasOwnProperty(key)) {
+                        normalItems.push(item);
+                    }
+                } else {
+                    normalItems.push(item);
+                }
+            }
+            this.normalItems = normalItems;
+        };
+
+    };
+    var visibleItems = new VisibleItems();
 
     // ==============================
     // ==============================
@@ -357,89 +595,52 @@ iD.TelenavLayer = function (context) {
             return proposedClassName === this.className;
         };
 
-        this.select = function(select) {
-            var node = d3.select('#' + this.id);
-            node.classed('selected', select);
-            this.selected = select;
+        this.transformId = function() {
+            return this.id;
         };
-    };
-    MapItem.transformClass = function(item) {
-        if(item.className != 'MissingRoadItem') {
-            return 'item ' + (item.selected ? 'selected ' : '') + item.className;
-        } else {
-            return 'item ' + (item.selected ? 'selected ' : '') + item.className + ' ' + item.status.toLowerCase() + ' ' + item.type.toLowerCase();
-        }
-    };
-    MapItem.transformId = function(item) {
-        return item.id;
-    };
-    MapItem.handleSelection = function(item) {
-        var node = d3.select('#' + item.id);
-        if (node.classed('selected')) {
-        //if (item.selected) {
-            if (d3.event.ctrlKey) {
-                //node.classed('selected', false);
-                item.select(false);
-                //for (var i = 0; i < selectedItems.length; i++) {
-                //    if (selectedItems[i].id === item.id) {
-                //        selectedItems.splice(i, 1);
-                //    }
-                //}
-                selectedItems2.removeItemById(item.id);
+        this.transformClass = function() {
+            if(this.className != 'MissingRoadItem') {
+                return 'item ' /*+ (this.selected ? 'selected ' : '')*/ + this.className;
             } else {
-                if (svg.selectAll('g.selected')[0].length === 1) {
-                    //node.classed('selected', false);
-                    item.select(false);
-                    //selectedItems.length = 0;
-                    selectedItems2.empty();
+                return 'item ' /*+ (this.selected ? 'selected ' : '')*/ + this.className + ' ' + this.status.toLowerCase() + ' ' + this.type.toLowerCase();
+            }
+        };
+            //// ================
+            //// HANDLE SELECTION
+            //// ================
+        this.handleSelection = function() {
+            if (visibleItems.isItemSelected(this)) {
+                if (d3.event.ctrlKey) {
+                    visibleItems.unselectItem(this.id);
                 } else {
-                    svg.selectAll('g').classed('selected', false);
-                    //selectedItems.length = 0;
-                    selectedItems2.empty();
-                    //node.classed('selected', true);
-                    item.select(true);
-                    //selectedItems.push(item);
-                    selectedItems2.add(item);
-                    //_editPanel.showSiblings(selectedItems2.getSiblings(item.id, combinedItems));
-                    _editPanel.showSiblings(selectedItems2.getSiblings(item.id, visibleItems.items));
+                    if (visibleItems.totalSelectedItems.length === 1) {
+                        visibleItems.deselectAll(true);
+                    } else {
+                        visibleItems.deselectAll(true);
+                        visibleItems.selectItem(this);
+                        _editPanel.showSiblings(visibleItems.getClusterSiblings(this));
+                    }
+                }
+            } else {
+                if (d3.event.ctrlKey) {
+                    visibleItems.selectItem(this);
+                    _editPanel.showSiblings(visibleItems.getClusterSiblings(this));
+                } else {
+                    visibleItems.deselectAll(true);
+                    visibleItems.selectItem(this);
+                    _editPanel.showSiblings(visibleItems.getClusterSiblings(this));
                 }
             }
-        } else {
-            if (d3.event.ctrlKey) {
-                //node.classed('selected', true);
-                item.select(true);
-                //////.attr('marker-end', 'url(#telenav-selected-arrow-marker)');/////???????? TODO
-                //selectedItems.push(item);
-                selectedItems2.add(item);
-                //_editPanel.showSiblings(selectedItems2.getSiblings(item.id, combinedItems));
-                _editPanel.showSiblings(selectedItems2.getSiblings(item.id, visibleItems.items));
+            d3.event.stopPropagation();
+            if (visibleItems.totalSelectedItems.length === 0) {
+                _editPanel.goToMain();
             } else {
-                svg.selectAll('g').classed('selected', false);
-                //selectedItems.length = 0;
-                selectedItems2.empty();
-                //node.classed('selected', true);
-                item.select(true);
-                //selectedItems.push(item);
-                selectedItems2.add(item);
-                //_editPanel.showSiblings(selectedItems2.getSiblings(item.id, combinedItems));
-                _editPanel.showSiblings(selectedItems2.getSiblings(item.id, visibleItems.items));
+                _editPanel.goToEdit(this);
+                _editPanel.selectedItemDetails(this);
             }
-        }
-        d3.event.stopPropagation();
-        if (selectedItems2.getSize() === 0) {
-        //if (selectedItems.length === 0) {
-            _editPanel.goToMain();
-        } else {
-            _editPanel.goToEdit(item);
-            _editPanel.selectedItemDetails(item);
-        }
+        };
     };
-    MapItem.handleMouseOver = function(item) {
-        item.highlight(item, true);
-    };
-    MapItem.handleMouseOut = function(item) {
-        item.highlight(item, false);
-    };
+
     // ==============================
     // ==============================
     // ClusteredItemView
@@ -451,10 +652,6 @@ iD.TelenavLayer = function (context) {
         this.id = 'tr_' + rawItemData.id.replace(/\:/g,'_').replace(/\+/g,'_').replace(/\#/g,'_');
         this.point = rawItemData.point;
         this.spotId = [rawItemData.point.lat, rawItemData.point.lon].join(',');
-
-        this.highlight = function(item, highlight) {
-
-        };
     };
 
     // ==============================
@@ -485,199 +682,243 @@ iD.TelenavLayer = function (context) {
         this.getInNo = function() {
             var x = rawItemData.segments[0].points[0].lon;
             var y = rawItemData.segments[0].points[0].lat;
+            var toX = rawItemData.segments[0].points[1].lon;
+            var toY = rawItemData.segments[0].points[1].lat;
             return {
                 val: rawItemData.segments[0].numberOfTrips,
-                x: Math.floor(context.projection([x, y])[0]),
-                y: Math.floor(context.projection([x, y])[1])
+                p: {
+                    x: Math.floor(context.projection([x, y])[0]),
+                    y: Math.floor(context.projection([x, y])[1])
+                },
+                toP: {
+                    x: Math.floor(context.projection([toX, toY])[0]),
+                    y: Math.floor(context.projection([toX, toY])[1])
+                }
             }
         };
         this.getOutNo = function() {
-            var last = rawItemData.segments[1].points.length - 1;
-            var x = rawItemData.segments[1].points[last].lon;
-            var y = rawItemData.segments[1].points[last].lat;
+            // preparing segments for them to be ordered
+            var rawSegments = [];
+            for (var i = 1; i < rawItemData.segments.length; i++) {
+                var rawPoints = [];
+                for (var j = 0; j < rawItemData.segments[i].points.length; j++) {
+                    rawPoints.push(rawItemData.segments[i].points[j]);
+                }
+                rawSegments.push(rawPoints);
+            }
+            // order them
+            var segments = Utils.orderSegments(rawSegments, this.point);
+            // pick our last two points
+            var lastSegment = segments.length - 1;
+            var lastPoint = segments[lastSegment].length - 1;
+            var x = segments[lastSegment][lastPoint].lon;
+            var y = segments[lastSegment][lastPoint].lat;
+            var toX = segments[lastSegment][lastPoint - 1].lon;
+            var toY = segments[lastSegment][lastPoint - 1].lat;
             return {
                 val: rawItemData.numberOfPasses,
-                x: Math.floor(context.projection([x, y])[0]),
-                y: Math.floor(context.projection([x, y])[1])
+                p: {
+                    x: Math.floor(context.projection([x, y])[0]),
+                    y: Math.floor(context.projection([x, y])[1])
+                },
+                toP: {
+                    x: Math.floor(context.projection([toX, toY])[0]),
+                    y: Math.floor(context.projection([toX, toY])[1])
+                }
             }
         };
-        this.highlight = function(item, highlight) {
-            d3.selectAll('#' + item.id)
-                .classed('highlightOn', highlight)
-                .classed('highlightOff', !highlight);
+        this.highlight = function(highlight) {
+            svg.selectAll('g.highlightedItemLayer *').remove();
+            if (highlight) {
+                var This = this;
+                var gElement = svg.selectAll('g.highlightedItemLayer').append('g').attr('class', 'trItem');
+                var circle = gElement.append('circle');
+                circle.attr('cx', this.transformX());
+                circle.attr('cy', this.transformY());
+                circle.attr('r', this.getCircleRadius());
+                gElement.on('click', function() {
+                    This.handleSelection();
+                });
+            }
+        };
+        this.getCircleRadius = function() {
+            var zoom = d3.select('.layer-telenav')[0][0].dataset.zoom;
+            switch (zoom) {
+                case 'z15p':
+                    return '8';
+                    break;
+                case 'z16m':
+                    return '11';
+                    break;
+                case 'z16p':
+                    return '14';
+                    break;
+                case 'z17m':
+                    return '17';
+                    break;
+                case 'z17p':
+                    return '20';
+                    break;
+                case 'z18m':
+                    return '23';
+                    break;
+                case 'z18p':
+                    return '26';
+                    break;
+                case 'z19m':
+                    return '29';
+                    break;
+                case 'z19p':
+                    return '32';
+                    break;
+                case 'z20m':
+                    return '35';
+                    break;
+                default:
+                    return '70';
+            }
+        };
+        this.transformX = function() {
+            return Math.floor(context.projection([this.point.lon, this.point.lat])[0]);
+        };
+        this.transformY = function() {
+            return Math.floor(context.projection([this.point.lon, this.point.lat])[1]);
+        };
+        this.transformLinePointsOut = function() {
+            var rawSegments = [];
+            for (var i = 1; i < this.segments.length; i++) {
+                var rawPoints = [];
+                for (var j = 0; j < this.segments[i].points.length; j++) {
+                    rawPoints.push(this.segments[i].points[j]);
+                }
+                rawSegments.push(rawPoints);
+            }
+
+            var segments = Utils.orderSegments(rawSegments, this.point);
+
+            var stringPoints = [];
+            for (var i = 0; i < segments.length; i++) {
+                for (var j = 0; j < segments[i].length; j++) {
+                    var point = context.projection([segments[i][j].lon, segments[i][j].lat]);
+                    stringPoints.push(point.toString());
+                }
+            }
+
+            return stringPoints.join(' ');
+        };
+        this.transformLinePointsIn1 = function() {
+            var stringPoints = [];
+            var split = Utils.splitSegment(this.segments[0].points);
+            for (var j = 0; j < this.segments[0].points.length; j++) {
+                var point = context.projection([this.segments[0].points[j].lon, this.segments[0].points[j].lat]);
+                stringPoints.push(point.toString());
+            }
+            stringPoints.splice(split.index + 1, 0, split.newPoint);
+            stringPoints.splice(split.index + 2, stringPoints.length - (split.index + 1));
+            return stringPoints.join(' ');
+        };
+        this.transformLinePointsIn2 = function() {
+            var stringPoints = [];
+            var split = Utils.splitSegment(this.segments[0].points);
+            for (var j = 0; j < this.segments[0].points.length; j++) {
+                var point = context.projection([this.segments[0].points[j].lon, this.segments[0].points[j].lat]);
+                stringPoints.push(point.toString());
+            }
+            stringPoints.splice(split.index + 1, 0, split.newPoint);
+            stringPoints.splice(0, split.index + 1);
+            return stringPoints.join(' ');
+        };
+        this.transformInNoX = function() {
+            var inNo = this.getInNo();
+            var angle = Utils.getSegmentAngle(inNo.p, inNo.toP);
+            return inNo.p.x + this.getLabelOffset(angle, false, true).x;
+        };
+        this.transformInNoY = function() {
+            var inNo = this.getInNo();
+            var angle = Utils.getSegmentAngle(inNo.p, inNo.toP);
+            return inNo.p.y + this.getLabelOffset(angle, false, true).y;
+        };
+        this.transformInNo = function() {
+            return this.getInNo().val;
+        };
+        this.transformOutNoX = function() {
+            var outNo = this.getOutNo();
+            var angle = Utils.getSegmentAngle(outNo.p, outNo.toP);
+            return outNo.p.x + this.getLabelOffset(angle, true, true).x;
+        };
+        this.transformOutNoY = function() {
+            var outNo = this.getOutNo();
+            var angle = Utils.getSegmentAngle(outNo.p, outNo.toP);
+            return outNo.p.y + this.getLabelOffset(angle, true, true).y;
+        };
+        this.transformOutNo = function() {
+            return this.getOutNo().val;
+        };
+        this.transformInNoRectX = function() {
+            var inNo = this.getInNo();
+            var angle = Utils.getSegmentAngle(inNo.p, inNo.toP);
+            return inNo.p.x + this.getLabelOffset(angle, false, false).x;
+        };
+        this.transformInNoRectY = function() {
+            var inNo = this.getInNo();
+            var angle = Utils.getSegmentAngle(inNo.p, inNo.toP);
+            return inNo.p.y + this.getLabelOffset(angle, false, false).y;
+        };
+        this.transformOutNoRectX = function() {
+            var outNo = this.getOutNo();
+            var angle = Utils.getSegmentAngle(outNo.p, outNo.toP);
+            return outNo.p.x + this.getLabelOffset(angle, true, false).x;
+        };
+        this.transformOutNoRectY = function() {
+            var outNo = this.getOutNo();
+            var angle = Utils.getSegmentAngle(outNo.p, outNo.toP);
+            return outNo.p.y + this.getLabelOffset(angle, true, false).y;
+        };
+        this.transformInNoRectWidth = function() {
+            return (this.getInNo().val.toString().length * 6) + 6;
+        };
+        this.transformOutNoRectWidth = function() {
+            return (this.getOutNo().val.toString().length * 6) + 6;
+        };
+        this.getLabelOffset = function(angle, arrowPresent, isText) {
+            var defaultXoffset = -13;
+            var defaultYoffset = -8;
+            if (isText) {
+                defaultXoffset = -10;
+                defaultYoffset = 3;
+            }
+            var mainOffset = 20;
+            if (arrowPresent) {
+                mainOffset = 35;
+            }
+            if (angle < 0) {
+                angle = 360 + angle;
+            }
+            if (angle == 0) {
+                angle = 360;
+            }
+            if (angle < 0 || angle > 360) {
+                throw new Error('TurnRestrictionItem : getLabelOffset - problem');
+            } else if (angle > 0 && angle <= 180) {
+                // segment direction DOWN
+                // label direction UP
+                return {
+                    x: defaultXoffset,
+                    y: defaultYoffset - mainOffset
+                };
+            } else if (angle > 180 && angle <= 360) {
+                // segment direction UP
+                // label direction DOWN
+                return {
+                    x: defaultXoffset,
+                    y: defaultYoffset + mainOffset
+                };
+            }
         };
     };
     // static
-    TurnRestrictionItem.getDistance = function(p1, p2) {
-
-        var x1 = Math.floor(context.projection([p1.lon, p1.lat])[0]);
-        var y1 = Math.floor(context.projection([p1.lon, p1.lat])[1]);
-
-        var x2 = Math.floor(context.projection([p2.lon, p2.lat])[0]);
-        var y2 = Math.floor(context.projection([p2.lon, p2.lat])[1]);
-
-        var a = x1 - x2;
-        var b = y1 - y2;
-
-        return Math.sqrt(a * a + b * b);
-    };
-    TurnRestrictionItem.findMiddle = function(p1, p2, d, dif) {
-        var x1 = Math.floor(context.projection([p1.lon, p1.lat])[0]);
-        var y1 = Math.floor(context.projection([p1.lon, p1.lat])[1]);
-
-        var x2 = Math.floor(context.projection([p2.lon, p2.lat])[0]);
-        var y2 = Math.floor(context.projection([p2.lon, p2.lat])[1]);
-
-        var a = x2 - x1;
-        var b = y2 - y1;
-
-        dif = d - dif;
-
-        var newX = (a * dif) / d;
-        var newY = (b * dif) / d;
-
-        newX = newX + x1;
-        newY = newY + y1;
-
-        return '' + newX + ',' + newY;
-    };
-    TurnRestrictionItem.splitSegment = function(segment) {
-        var length = 0;
-        var distances = [];
-        for (var i = 0; i < segment.length - 1; i++) {
-            var d = TurnRestrictionItem.getDistance(segment[i], segment[i + 1]);
-            length += d;
-            distances.push(d);
-        }
-        var target = length / 2;
-        length = 0;
-        var location = 0;
-        for (var i = 0; i < segment.length - 1; i++) {
-            length += distances[i];
-            if (length > target) {
-                location = i;
-                break;
-            }
-        }
-
-        var newPoint = TurnRestrictionItem.findMiddle(
-            segment[location],
-            segment[location + 1],
-            distances[location],
-            length - target
-        );
-
-        return {
-            newPoint: newPoint,
-            index: location
-        };
-    };
     TurnRestrictionItem.prototype = new MapItem();
-    TurnRestrictionItem.transformX = function(item) {
-        return Math.floor(context.projection([item.point.lon, item.point.lat])[0]);
-    };
-    TurnRestrictionItem.transformY= function(item) {
-        return Math.floor(context.projection([item.point.lon, item.point.lat])[1]);
-    };
-    TurnRestrictionItem.transformLinePoints = function(item) {
-        var stringPoints = [];
-        for (var i = 0; i < item.segments.length; i++) {
-            for (var j = 0; j < item.segments[i].points.length; j++) {
-                var point = context.projection([item.segments[i].points[j].lon, item.segments[i].points[j].lat]);
-                stringPoints.push(point.toString());
-            }
-        }
 
-        return stringPoints.join(' ');
-    };
-    TurnRestrictionItem.transformLinePointsOut = function(item) {
-        var rawSegments = [];
-        for (var i = 1; i < item.segments.length; i++) {
-            var rawPoints = [];
-            for (var j = 0; j < item.segments[i].points.length; j++) {
-                //var point = context.projection([item.segments[i].points[j].lon, item.segments[i].points[j].lat]);
-                rawPoints.push(item.segments[i].points[j]);
-            }
-            rawSegments.push(rawPoints);
-        }
-
-        var segments = Utils.orderSegments(rawSegments, item.point);
-
-        var stringPoints = [];
-        for (var i = 0; i < segments.length; i++) {
-            for (var j = 0; j < segments[i].length; j++) {
-                var point = context.projection([segments[i][j].lon, segments[i][j].lat]);
-                stringPoints.push(point.toString());
-            }
-        }
-
-        return stringPoints.join(' ');
-    };
-    TurnRestrictionItem.transformLinePointsIn1 = function(item) {
-        var stringPoints = [];
-        var split = TurnRestrictionItem.splitSegment(item.segments[0].points);
-        for (var j = 0; j < item.segments[0].points.length; j++) {
-            var point = context.projection([item.segments[0].points[j].lon, item.segments[0].points[j].lat]);
-            stringPoints.push(point.toString());
-        }
-        stringPoints.splice(split.index + 1, 0, split.newPoint);
-        stringPoints.splice(split.index + 2, stringPoints.length - (split.index + 1));
-        return stringPoints.join(' ');
-    };
-    TurnRestrictionItem.transformLinePointsIn2 = function(item) {
-        var stringPoints = [];
-        var split = TurnRestrictionItem.splitSegment(item.segments[0].points);
-        for (var j = 0; j < item.segments[0].points.length; j++) {
-            var point = context.projection([item.segments[0].points[j].lon, item.segments[0].points[j].lat]);
-            stringPoints.push(point.toString());
-        }
-        stringPoints.splice(split.index + 1, 0, split.newPoint);
-        stringPoints.splice(0, split.index + 1);
-        return stringPoints.join(' ');
-    };
-    TurnRestrictionItem.transformInNoX = function(item) {
-        return Math.floor(context.projection([lon, lat])[0]);
-    };
-    TurnRestrictionItem.transformInNoY = function(item) {
-        return Math.floor(context.projection([lon, lat])[1]);
-    };
-    TurnRestrictionItem.transformInNoX = function(item) {
-        return item.getInNo().x - 10;
-    };
-    TurnRestrictionItem.transformInNoY = function(item) {
-        return item.getInNo().y - 25;
-    };
-    TurnRestrictionItem.transformInNo = function(item) {
-        return item.getInNo().val;
-    };
-    TurnRestrictionItem.transformOutNoX = function(item) {
-        return item.getOutNo().x - 10;
-    };
-    TurnRestrictionItem.transformOutNoY = function(item) {
-        return item.getOutNo().y - 25;
-    };
-    TurnRestrictionItem.transformOutNo = function(item) {
-        return item.getOutNo().val;
-    };
-
-    TurnRestrictionItem.transformInNoRectX = function(item) {
-        return item.getInNo().x - 13;
-    };
-    TurnRestrictionItem.transformInNoRectY = function(item) {
-        return item.getInNo().y - 36;
-    };
-    TurnRestrictionItem.transformOutNoRectX = function(item) {
-        return item.getOutNo().x - 13;
-    };
-    TurnRestrictionItem.transformOutNoRectY = function(item) {
-        return item.getOutNo().y - 36;
-    };
-    TurnRestrictionItem.transformInNoRectWidth = function(item) {
-        return (item.getInNo().val.toString().length * 6) + 6;
-    };
-    TurnRestrictionItem.transformOutNoRectWidth = function(item) {
-        return (item.getOutNo().val.toString().length * 6) + 6;
-    };
     // ==============================
     // ==============================
     // MissingRoadIcon
@@ -692,7 +933,8 @@ iD.TelenavLayer = function (context) {
         this.status = rawItemData.status;
         this.timestamp = rawItemData.timestamp * 1000; // JS needs miliseconds
         this.spotId = [rawItemData.x, rawItemData.y].join(',');
-
+        this.x = rawItemData.x;
+        this.y = rawItemData.y;
 
         this.getX = function() {
             return rawItemData.x;
@@ -706,84 +948,61 @@ iD.TelenavLayer = function (context) {
                 y: rawItemData.y
             }];
         };
-        this.highlight = function(item, highlight) {
-            d3.selectAll('#' + item.id)
-                .classed('highlightOn', highlight)
-                .classed('highlightOff', !highlight);
+        this.highlight = function(highlight) {
+            svg.selectAll('g.highlightedItemLayer *').remove();
+            if (highlight) {
+                var This = this;
+                var gElement = svg.selectAll('g.highlightedItemLayer').append('g').attr('class', 'mrItem');
+                var rect = gElement.append('rect');
+                rect.attr('x', this.computeTileX());
+                rect.attr('y', this.computeTileY());
+                rect.attr('width', this.computeTileWidth());
+                rect.attr('height', this.computeTileHeight());
+                gElement.on('click', function() {
+                    This.handleSelection();
+                });
+            }
+        };
+        this.computeTileX = function() {
+            var squareCoords = Utils.getTileSquare(this.x, this.y);
+            var startLat = squareCoords.latMax;
+            var startLon = squareCoords.lonMin;
+            return Math.floor(context.projection([startLon, startLat])[0]);
+        };
+        this.computeTileY = function() {
+            var squareCoords = Utils.getTileSquare(this.x, this.y);
+            var startLat = squareCoords.latMax;
+            var startLon = squareCoords.lonMin;
+            return Math.floor(context.projection([startLon, startLat])[1]);
+        };
+        this.computeTileWidth = function() {
+            var squareCoords = Utils.getTileSquare(this.x, this.y);
+            var startLat = squareCoords.latMax;
+            var startLon = squareCoords.lonMin;
+            var startX = Math.floor(context.projection([startLon, startLat])[0]);
+            var endLat = squareCoords.latMin;
+            var endLon = squareCoords.lonMax;
+            var endX = Math.floor(context.projection([endLon, endLat])[0]);
+            return Math.abs(endX - startX);
+        };
+        this.computeTileHeight = function() {
+            var squareCoords = Utils.getTileSquare(this.x, this.y);
+            var startLat = squareCoords.latMax;
+            var startLon = squareCoords.lonMin;
+            var startY = Math.floor(context.projection([startLon, startLat])[1]);
+            var endLat = squareCoords.latMin;
+            var endLon = squareCoords.lonMax;
+            var endY = Math.floor(context.projection([endLon, endLat])[1]);
+            return Math.abs(endY - startY);
+        };
+        this.computeX = function(i) {
+            return Math.floor(context.projection([this._points[i].lon, this._points[i].lat])[0]);
+        };
+        this.computeY = function(i) {
+            return Math.floor(context.projection([this._points[i].lon, this._points[i].lat])[1]);
         };
     };
     MissingRoadItem.prototype = new MapItem();
-    MissingRoadItem.computeX = function(lat, lon) {
-        return Math.floor(context.projection([lon, lat])[0]);
-    };
-    MissingRoadItem.computeY = function(lat, lon) {
-        return Math.floor(context.projection([lon, lat])[1]);
-    };
-    MissingRoadItem.transformTileX = function(item) {
-        var squareCoords = Utils.getTileSquare(item.getX(), item.getY());
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        return Math.floor(context.projection([startLon, startLat])[0]);
-    };
-    MissingRoadItem.transformTileY = function(item) {
-        var squareCoords = Utils.getTileSquare(item.getX(), item.getY());
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        return Math.floor(context.projection([startLon, startLat])[1]);
-    };
-    MissingRoadItem.transformTileWidth = function(item) {
-        var squareCoords = Utils.getTileSquare(item.getX(), item.getY());
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        var startX = Math.floor(context.projection([startLon, startLat])[0]);
-        var endLat = squareCoords.latMin;
-        var endLon = squareCoords.lonMax;
-        var endX = Math.floor(context.projection([endLon, endLat])[0]);
-        return Math.abs(endX - startX);
-    };
-    MissingRoadItem.transformTileHeight = function(item) {
-        var squareCoords = Utils.getTileSquare(item.getX(), item.getY());
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        var startY = Math.floor(context.projection([startLon, startLat])[1]);
-        var endLat = squareCoords.latMin;
-        var endLon = squareCoords.lonMax;
-        var endY = Math.floor(context.projection([endLon, endLat])[1]);
-        return Math.abs(endY - startY);
-    };
-
-    MissingRoadItem.computeTileX = function(x, y) {
-        var squareCoords = Utils.getTileSquare(x, y);
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        return Math.floor(context.projection([startLon, startLat])[0]);
-    };
-    MissingRoadItem.computeTileY = function(x, y) {
-        var squareCoords = Utils.getTileSquare(x, y);
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        return Math.floor(context.projection([startLon, startLat])[1]);
-    };
-    MissingRoadItem.computeTileWidth = function(x, y) {
-        var squareCoords = Utils.getTileSquare(x, y);
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        var startX = Math.floor(context.projection([startLon, startLat])[0]);
-        var endLat = squareCoords.latMin;
-        var endLon = squareCoords.lonMax;
-        var endX = Math.floor(context.projection([endLon, endLat])[0]);
-        return Math.abs(endX - startX);
-    };
-    MissingRoadItem.computeTileHeight = function(x, y) {
-        var squareCoords = Utils.getTileSquare(x, y);
-        var startLat = squareCoords.latMax;
-        var startLon = squareCoords.lonMin;
-        var startY = Math.floor(context.projection([startLon, startLat])[1]);
-        var endLat = squareCoords.latMin;
-        var endLon = squareCoords.lonMax;
-        var endY = Math.floor(context.projection([endLon, endLat])[1]);
-        return Math.abs(endY - startY);
-    };
 
     // ==============================
     // ==============================
@@ -810,22 +1029,120 @@ iD.TelenavLayer = function (context) {
                 toNodeId: rawItemData.toNodeId
             }];
         };
-        this.highlight = function(item, highlight) {
-            //d3.selectAll('#' + item.id)
-            //    .classed('highlightOn', highlight)
-            //    .classed('highlightOff', !highlight)
-            //    .attr('marker-end', highlight ? 'url(#telenav-selected-arrow-marker)' : null);
+        this.highlight = function(highlight) {
+            svg.selectAll('g.highlightedItemLayer *').remove();
+            if (highlight) {
+                var This = this;
+                var gElement = svg.selectAll('g.highlightedItemLayer').append('g').attr('class', 'owItem');
+                var line = gElement.append('polyline');
+                line.style('marker-end', 'url(#telenav-arrow-black)');
+                line.attr('points', this.transformLinePoints());
+                gElement.on('click', function() {
+                    This.handleSelection();
+                });
+            }
+        };
+        this.transformLinePoints = function() {
+            var stringPoints = [];
+            for (var i = 0; i < this.getPoints().length; i++) {
+                var point = context.projection([this.getPoints()[i].lon, this.getPoints()[i].lat]);
+                stringPoints.push(point.toString());
+            }
+            return stringPoints.join(' ');
         };
 
     };
     DirectionOfFlowItem.prototype = new MapItem();
-    DirectionOfFlowItem.transformLinePoints = function(item) {
-        var stringPoints = [];
-        for (var i = 0; i < item.getPoints().length; i++) {
-            var point = context.projection([item.getPoints()[i].lon, item.getPoints()[i].lat]);
-            stringPoints.push(point.toString());
+
+    // ==============================
+    // ==============================
+    // ClusteredItem
+    // ==============================
+    // ==============================
+    var ClusteredItem = function(rawData) {
+        this.id = rawData.lat + ',' + rawData.lon;
+        this.class = 'ClusteredItem';
+        this.items = rawData.items;
+
+        this.transformClass = function() {
+            return 'item ' + this.class;
+        };
+        this.transformId = function() {
+            return this.id;
+        };
+
+        this.transformX = function(offset) {
+            if (typeof offset === 'undefined') {
+                offset = 0;
+            }
+            return Math.floor(context.projection([rawData.lon, rawData.lat])[0]) + offset;
+        };
+        this.transformY = function(offset) {
+            if (typeof offset === 'undefined') {
+                offset = 0;
+            }
+            return Math.floor(context.projection([rawData.lon, rawData.lat])[1]) + offset;
+        };
+        this.transformAmount = function() {
+            return this.items.length;
+        };
+        this.highlight = function(highlight) {
+            svg.selectAll('g.highlightedItemLayer *').remove();
+            if (highlight) {
+                var This = this;
+                var gElement = svg.selectAll('g.highlightedItemLayer').append('g').attr('class', 'clItem');
+                var circle = gElement.append('circle');
+                circle.attr('cx', this.transformX());
+                circle.attr('cy', this.transformY());
+                circle.attr('r', this.getCircleRadius());
+                gElement.on('click', function() {
+                    This.handleSelection();
+                });
+            }
+        };
+        this.handleSelection = function() {
+            if (visibleItems.selectionHasCluster()) {
+                visibleItems.deselectAll(true);
+            }
+            this.items[0].handleSelection();
         }
-        return stringPoints.join(' ');
+        this.getCircleRadius = function() {
+            var zoom = d3.select('.layer-telenav')[0][0].dataset.zoom;
+            switch (zoom) {
+                case 'z15p':
+                    return '13';
+                    break;
+                case 'z16m':
+                    return '16';
+                    break;
+                case 'z16p':
+                    return '19';
+                    break;
+                case 'z17m':
+                    return '22';
+                    break;
+                case 'z17p':
+                    return '25';
+                    break;
+                case 'z18m':
+                    return '28';
+                    break;
+                case 'z18p':
+                    return '31';
+                    break;
+                case 'z19m':
+                    return '34';
+                    break;
+                case 'z19p':
+                    return '37';
+                    break;
+                case 'z20m':
+                    return '40';
+                    break;
+                default:
+                    return '80';
+            }
+        };
     };
 
     // ==============================
@@ -840,26 +1157,30 @@ iD.TelenavLayer = function (context) {
         this.size = rawItemData.size;
         this.type = type;
         this.pixelRadius = null;
-    };
-    ClusterCircle.transformClass = function(cluster) {
-        return cluster.className;
-    };
-    ClusterCircle.transformType = function(cluster) {
-        return cluster.type;
-    };
-    ClusterCircle.transformX = function(cluster) {
-        return Math.floor(context.projection([cluster.point.lon, cluster.point.lat])[0]);
-    };
-    ClusterCircle.transformY = function(cluster) {
-        return Math.floor(context.projection([cluster.point.lon, cluster.point.lat])[1]);
-    };
-    ClusterCircle.transformR = function(cluster) {
-        return cluster.pixelRadius;
+
+        this.transformId = function() {
+            return this.id;
+        };
+        this.transformClass = function() {
+            return this.className;
+        };
+        this.transformType = function() {
+            return this.type;
+        };
+        this.transformX = function() {
+            return Math.floor(context.projection([this.point.lon, this.point.lat])[0]);
+        };
+        this.transformY = function() {
+            return Math.floor(context.projection([this.point.lon, this.point.lat])[1]);
+        };
+        this.transformR = function() {
+            return this.pixelRadius;
+        };
     };
 
     // ==============================
     // ==============================
-    // ClusterCircle
+    // HeatMap
     // ==============================
     // ==============================
     var HeatMap = function(zoom) {
@@ -904,8 +1225,18 @@ iD.TelenavLayer = function (context) {
     // ==============================
     var EditPanel = function() {
 
+        var switchActive = null;
+
         this._location = 'MAIN';
-        this.editMode = false;
+        this.editMode = true;
+
+        this.status = 'OPEN';
+
+        this.siblingsShown = false;
+
+        var getSelectedID = function() {
+            return d3.select('#siblingsPanel li.selected').attr('data-id');
+        };
 
         //get the width of the panel for animation effect
         this._panelWidth = function(){
@@ -916,115 +1247,639 @@ iD.TelenavLayer = function (context) {
             return this._location;
         };
 
-        this.toggleEditMode = function(editMode) {
+        this.showsSiblings = function() {
+            return this.siblingsShown;
+        };
 
-            var roadMr = d3.select('#telenav_roadMr');
-            var parkingMr = d3.select('#telenav_parkingMr');
-            var bothMr = d3.select('#telenav_bothMr');
-            var waterMr = d3.select('#telenav_waterMr');
-            var pathMr = d3.select('#telenav_pathMr');
-
-            if (typeof editMode !== 'boolean') {
-                throw new Error('EditMode::toggleEditMode - unexpected parameter');
-            } else if (editMode) {
-                roadMr.classed('editMode', true);
-                parkingMr.classed('editMode', true);
-                bothMr.classed('editMode', true);
-                waterMr.classed('editMode', true);
-                pathMr.classed('editMode', true);
-
-                d3.select('#telenav-active').classed('selected', true)
-                d3.select('#telenav-inactive').classed('selected', false)
-                d3.select('.layer-telenav').classed('editMode', true);
-                this.editMode = true;
-            } else {
-                roadMr.classed('editMode', false);
-                parkingMr.classed('editMode', false);
-                bothMr.classed('editMode', false);
-                waterMr.classed('editMode', false);
-                pathMr.classed('editMode', false);
-
-                d3.select('#telenav-active').classed('selected', false)
-                d3.select('#telenav-inactive').classed('selected', true)
-                d3.select('.layer-telenav').classed('editMode', false);
-                this.editMode = false;
+        this.getNextSiblingID = function() {
+            var selectedId = getSelectedID();
+            var allLiItems = d3.selectAll('#siblingsPanel li');
+            var allIDs = [];
+            allLiItems.each(function(d, i) {
+                allIDs.push(d3.select(this).attr('data-id'));
+            });
+            for (var i = 0; i < allIDs.length; i++) {
+                if (allIDs[i] === selectedId) {
+                    if (i === allIDs.length - 1) {
+                        return allIDs[0];
+                    } else {
+                        return allIDs[i + 1];
+                    }
+                }
             }
         };
 
-        this.deselectAll = function() {
-            svg.selectAll('g').classed('selected', false);
-            //selectedItems.length = 0;
-            selectedItems2.empty();
-            this.goToMain();
+        this.isSwitchActive = function() {
+            return switchActive;
+        };
+
+
+        var zoom = Math.floor(context.map().zoom());
+        var mode = zoom > 14 ? 'active' : 'heatmap';
+        var editable = true;
+        var switchEnabled = zoom > 14 ? true : false;
+        var minimized = false;
+
+        var renderEditable = function(newEditable) {
+
+            if (newEditable) {
+                d3.select('#telenav_roadMr').classed('editMode', true);
+                d3.select('#telenav_parkingMr').classed('editMode', true);
+                d3.select('#telenav_bothMr').classed('editMode', true);
+                d3.select('#telenav_waterMr').classed('editMode', true);
+                d3.select('#telenav_pathMr').classed('editMode', true);
+
+                d3.select('#telenav-active').classed('selected', true);
+                d3.select('#telenav-inactive').classed('selected', false);
+                d3.select('.layer-telenav').classed('editMode', true);
+
+            } else {
+                d3.select('#telenav_roadMr').classed('editMode', false);
+                d3.select('#telenav_parkingMr').classed('editMode', false);
+                d3.select('#telenav_bothMr').classed('editMode', false);
+                d3.select('#telenav_waterMr').classed('editMode', false);
+                d3.select('#telenav_pathMr').classed('editMode', false);
+
+                d3.select('#telenav-active').classed('selected', false);
+                d3.select('#telenav-inactive').classed('selected', true);
+                d3.select('.layer-telenav').classed('editMode', false);
+
+            }
+            editable = newEditable;
+        };
+
+        var renderActivationSwitch = function(newSwitchEnabled) {
+
+            if (newSwitchEnabled) {
+                d3.select('#telenav-inactive').style('opacity', '1');
+                d3.select('#telenav-active').style('opacity', '1');
+                d3.select('#telenav-inactive').on('click', _editPanel.toggleEditable);
+                d3.select('#telenav-active').on('click', _editPanel.toggleEditable);
+                d3.select('#telenav-oneWay-headerDot').style('visibility', 'hidden');
+                d3.select('#telenav-missingRoad-headerDot').style('visibility', 'hidden');
+                d3.select('#telenav-turnRestriction-headerDot').style('visibility', 'hidden');
+
+                d3.select('#telenav_roadMr').classed('showShade', true);
+                d3.select('#telenav_parkingMr').classed('showShade', true);
+                d3.select('#telenav_bothMr').classed('showShade', true);
+                d3.select('#telenav_waterMr').classed('showShade', true);
+                d3.select('#telenav_pathMr').classed('showShade', true);
+            } else {
+                d3.select('#telenav-inactive').style('opacity', '0.2');
+                d3.select('#telenav-active').style('opacity', '0.2');
+                d3.select('#telenav-inactive').on('click', null);
+                d3.select('#telenav-active').on('click', null);
+                d3.select('#telenav-oneWay-headerDot').style('visibility', 'visible');
+                d3.select('#telenav-missingRoad-headerDot').style('visibility', 'visible');
+                d3.select('#telenav-turnRestriction-headerDot').style('visibility', 'visible');
+
+                d3.select('#telenav_roadMr').classed('showShade', false);
+                d3.select('#telenav_parkingMr').classed('showShade', false);
+                d3.select('#telenav_bothMr').classed('showShade', false);
+                d3.select('#telenav_waterMr').classed('showShade', false);
+                d3.select('#telenav_pathMr').classed('showShade', false);
+            }
+            switchEnabled = newSwitchEnabled;
+        };
+
+        var renderMinimized = function(newMinimized) {
+
+            if (newMinimized) {
+                d3.select('.pane-telenav').transition().style('height', '60px');
+            } else {
+                var fullHeight = d3.select('#id-container').style('height');
+                fullHeight = parseInt(fullHeight.slice(0, -2)) - 16;
+                d3.select('.pane-telenav').transition().style('height', '' + fullHeight + 'px');
+            }
+            minimized = newMinimized;
+        };
+
+        var toggleMode = function(newMode) {
+            switch (newMode) {
+                case 'heatmap':
+                    renderEditable(false);
+                    renderActivationSwitch(false);
+                    renderMinimized(false);
+                    break;
+                case 'active':
+                    renderEditable(true);
+                    renderActivationSwitch(true);
+                    renderMinimized(false);
+                    break;
+                case 'selected':
+                    renderEditable(true);
+                    renderActivationSwitch(true);
+                    renderMinimized(false);
+                    break;
+                case 'inactive':
+                    renderEditable(false);
+                    renderActivationSwitch(true);
+                    renderMinimized(true);
+                    break;
+                default:
+            }
+            mode = newMode;
+        };
+
+        this.init = function() {
+
+            var div = d3.selectAll('.pane_telenav')
+                .data([0]);
+
+            var enter = div.enter().append('div')
+                .attr('class', 'pane-telenav col4 hidden');
+            var telenavWrapPanel = enter.append('div')
+                .attr('class', 'telenav-wrap');
+            var telenavWrap = telenavWrapPanel.append('div')
+                .attr('class', 'telenavwrap');
+
+            //  START 3rd container div
+            var userWindow = telenavWrap.append('div')
+                .attr('id', 'userWindow')
+                .attr('class', 'entity-editor-pane pane');
+            var userWindowHeader = userWindow.append('div')
+                .attr('class', 'header fillL cf');
+
+            userWindowHeader.append('h3')
+                .attr('class', 'main-header')
+                .text('Improve OSM panel');
+            var backDeselectWrapper = userWindowHeader.append('div')
+                .attr('class', 'button-wrap single joined fr')
+            backDeselectWrapper.append('button')
+                .attr('class', 'telenav-back telenav-header-button')
+                .attr('id', 'telenav-back')
+                .on('click', function(){
+                    _editPanel.deselectAll(true);
+                    render(d3.select('.layer-telenav'));
+                })
+                .append('span')
+                .text('Back / Deselect');
+            var userWindowBody = userWindow.append('div')
+                .attr('class', 'telenav-body');
+            var userWindowInner = userWindowBody.append('div')
+                .attr('class', 'inspector-border inspector-preset')
+                .append('div');
+            var userContainer = userWindowInner.append('div')
+                .attr('class', 'preset-form inspector-inner');
+            var multipleTR_form = userContainer.append('div')
+                .attr('class', 'form-field')
+                .attr('id', 'siblingsPanel');
+            multipleTR_form.append('label')
+                .attr('class', 'form-label')
+                .text('Possible Turn Restrictions:')
+                .append('div')
+                .attr('class', 'form-label-button-wrap');
+
+            var multipleTR_formWrap = multipleTR_form.append('form')
+                .attr('class', 'filterForm optionsContainer trList')
+                .append('ul')
+                .attr('id', 'siblingsList');
+
+            var detailedInfo_form = userContainer.append('div')
+                .attr('class', 'form-field');
+            detailedInfo_form.append('label')
+                .attr('class', 'form-label')
+                .text('Detailed Information')
+                .append('div')
+                .attr('class', 'form-label-button-wrap');
+
+            detailedInfo_form.append('form')
+                .attr('class', 'filterForm optionsContainer itemDetails');
+
+            var statusUpdate_form = userContainer.append('div')
+                .attr('class', 'form-field');
+            statusUpdate_form.append('label')
+                .attr('class', 'form-label')
+                .text('Change Status')
+                .append('div')
+                .attr('class', 'form-label-button-wrap');
+            var statusUpdate_formWrap = statusUpdate_form.append('form')
+                .attr('class', 'filterForm optionsContainer')
+                .attr('id', 'statusSetter');
+
+            var statusSetterOpen = statusUpdate_formWrap.append('div')
+                .attr('class', 'tel_displayInline' + (_editPanel.status === 'OPEN' ? ' selected' : ''))
+                .attr('data-filter-type', 'OPEN');
+            statusSetterOpen.append('span')
+                .text('open');
+
+            var statusSetterSolved = statusUpdate_formWrap.append('div')
+                .attr('class', 'tel_displayInline' + (_editPanel.status === 'SOLVED' ? ' selected' : ''))
+                .attr('data-filter-type', 'SOLVED');
+            statusSetterSolved.append('span')
+                .text('solved');
+
+            var statusSetterInvalid = statusUpdate_formWrap.append('div')
+                .attr('class', 'tel_displayInline' + (_editPanel.status === 'INVALID' ? ' selected' : ''))
+                .attr('data-filter-type', 'INVALID');
+            statusSetterInvalid.append('span')
+                .text('invalid');
+
+            var comments_form = userContainer.append('div')
+                .attr('class', 'form-field');
+            comments_form.append('label')
+                .attr('class', 'form-label')
+                .text('Comment')
+                .append('div')
+                .attr('class', 'form-label-button-wrap')
+                .append('button')
+                .attr('class', 'save-icon')
+                .attr('id', 'saveComment')
+                .call(iD.svg.Icon('#icon-save'));
+            comments_form.append('textarea')
+                .attr('class', 'commentText')
+                .attr('maxLength', '600')
+                .attr('id', 'commentText');
+
+            //  END 3rd container div
+
+            //  START 1st container div
+            var generalSettingsWindow = telenavWrap.append('div')
+                .attr('id', 'generalSettingsWindow')
+                .attr('class', 'entity-editor-pane pane pane-middle');
+            var generalWindowsWindowHeader = generalSettingsWindow.append('div')
+                .attr('class', 'header fillL cf');
+
+            generalWindowsWindowHeader.append('h3')
+                .attr('class', 'main-header')
+                .text('Improve OSM panel');
+            var switchWrapper = generalWindowsWindowHeader.append('div')
+                .attr('class', 'button-wrap joined fr')
+            switchWrapper.append('button')
+                .attr('class', 'telenav-header-button active selected')
+                .attr('id', 'telenav-active')
+                .append('span')
+                .text('Active');
+            switchWrapper.append('button')
+                .attr('class', 'telenav-header-button inactive')
+                .attr('id', 'telenav-inactive')
+                .append('span')
+                .text('Inactive');
+            var generalSettingsBody = generalSettingsWindow.append('div')
+                .attr('class', 'telenav-body');
+
+            var containerBorder = generalSettingsBody.append('div')
+                .attr('class', 'inspector-border inspector-preset')
+                .append('div');
+            var presetFormContainer = containerBorder.append('div')
+                .attr('class', 'preset-form inspector-inner');
+
+            var presetForm = presetFormContainer.append('div')
+                .attr('class', 'form-field');
+            presetForm.append('label')
+                .attr('class', 'form-label')
+                .text('Reported Status');
+            var statusForm = presetForm.append('form')
+                .attr('class', 'filterForm optionsContainer')
+                .attr('id', 'statusFilter');
+            var statusDivOpen = statusForm.append('div')
+                .attr('class', 'tel_displayInline' + (_editPanel.status === 'OPEN' ? ' selected' : ''))
+                .attr('data-filter-type', 'OPEN');
+            statusDivOpen.append('span')
+                .text('open');
+
+            var statusDivSolved = statusForm.append('div')
+                .attr('class', 'tel_displayInline' + (_editPanel.status === 'SOLVED' ? ' selected' : ''))
+                .attr('data-filter-type', 'SOLVED');
+            statusDivSolved.append('span')
+                .text('solved');
+
+            var statusDivInvalid = statusForm.append('div')
+                .attr('class', 'tel_displayInline' + (_editPanel.status === 'INVALID' ? ' selected' : ''))
+                .attr('data-filter-type', 'INVALID');
+            statusDivInvalid.append('span')
+                .text('invalid');
+            //  END 1st container div
+
+            //  START 2st container div
+            var direction_form = presetFormContainer.append('div')
+                .attr('class', 'form-field')
+                .attr('id', 'dofFilter');
+            var owHeadWrap = direction_form.append('label')
+                .attr('class', 'form-label')
+                .attr('for', 'oneWay')
+                .text('One Way')
+                .append('div')
+                .attr('class', 'form-label-button-wrap')
+            owHeadWrap.append('span').append('i')
+                .attr('id', 'telenav-oneWay-headerDot');
+            owHeadWrap.append('div')
+                .attr('class', 'input')
+                .append('input')
+                .attr('type', 'checkbox')
+                .attr('checked', 'checked')
+                .attr('class', 'filterActivation')
+                .attr('id', 'oneWay');
+            var direction_formWrap = direction_form.append('form')
+                .attr('class', 'filterForm optionsContainer');
+            var direction_highlyProbableContainer = direction_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            direction_highlyProbableContainer.append('input')
+                .attr('id', 'C1')
+                .attr('type', 'checkbox')
+                .attr('checked', 'checked');
+            direction_highlyProbableContainer.append('label')
+                .attr('for', 'C1')
+                .text('Highly Probable');
+            var direction_mostLikelyContainer = direction_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            direction_mostLikelyContainer.append('input')
+                .attr('id', 'C2')
+                .attr('type', 'checkbox');
+            direction_mostLikelyContainer.append('label')
+                .attr('for', 'C2')
+                .text('Most Likely');
+            var direction_probableContainer = direction_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            direction_probableContainer.append('input')
+                .attr('id', 'C3')
+                .attr('type', 'checkbox');
+            direction_probableContainer.append('label')
+                .attr('for', 'C3')
+                .text('Probable');
+
+            var missing_form = presetFormContainer.append('div')
+                .attr('class', 'form-field')
+                .attr('id', 'mrFilter');
+            var mrHeadWrap = missing_form.append('label')
+                .attr('class', 'form-label')
+                .attr('for', 'missingRoadType')
+                .text('Missing roads')
+                .append('div')
+                .attr('class', 'form-label-button-wrap');
+            mrHeadWrap.append('span').append('i')
+                .attr('id', 'telenav-missingRoad-headerDot');
+            mrHeadWrap.append('div')
+                .attr('class', 'input')
+                .append('input')
+                .attr('type', 'checkbox')
+                .attr('checked', 'checked')
+                .attr('class', 'filterActivation')
+                .attr('id', 'missingRoads');
+            var missing_formWrap = missing_form.append('form')
+                .attr('class', 'filterForm optionsContainer');
+            var missing_roadContainer = missing_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            missing_roadContainer.append('input')
+                .attr('id', 'ROAD')
+                .attr('type', 'checkbox')
+                .attr('checked', 'checked');
+            missing_roadContainer.append('label')
+                .attr('id', 'telenav_roadMr')
+                .attr('for', 'ROAD')
+                .text('Road');
+            var missing_parkingContainer = missing_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            missing_parkingContainer.append('input')
+                .attr('id', 'PARKING')
+                .attr('type', 'checkbox');
+            missing_parkingContainer.append('label')
+                .attr('id', 'telenav_parkingMr')
+                .attr('for', 'PARKING')
+                .text('Parking');
+            var missing_bothContainer = missing_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            missing_bothContainer.append('input')
+                .attr('id', 'BOTH')
+                .attr('type', 'checkbox');
+            missing_bothContainer.append('label')
+                .attr('id', 'telenav_bothMr')
+                .attr('for', 'BOTH')
+                .text('Both');
+            missing_formWrap.append('label')
+                .attr('class', 'form-subLabel tel_displayBlock')
+                .text('Filters');
+            var missing_waterContainer = missing_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            missing_waterContainer.append('input')
+                .attr('id', 'WATER')
+                .attr('type', 'checkbox');
+            missing_waterContainer.append('label')
+                .attr('id', 'telenav_waterMr')
+                .attr('for', 'WATER')
+                .text('Water Trail');
+            var missing_pathContainer = missing_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            missing_pathContainer.append('input')
+                .attr('id', 'PATH')
+                .attr('type', 'checkbox');
+            missing_pathContainer.append('label')
+                .attr('id', 'telenav_pathMr')
+                .attr('for', 'PATH')
+                .text('Path Trail');
+
+
+            var restriction_form = presetFormContainer.append('div')
+                .attr('class', 'form-field')
+                .attr('id', 'trFilter');
+            var trHeadWrap = restriction_form.append('label')
+                .attr('class', 'form-label')
+                .attr('for', 'missingRoads')
+                .text('Turn Restriction')
+                .append('div')
+                .attr('class', 'form-label-button-wrap');
+            trHeadWrap.append('span').append('i')
+                .attr('id', 'telenav-turnRestriction-headerDot');
+            trHeadWrap.append('div')
+                .attr('class', 'input')
+                .append('input')
+                .attr('type', 'checkbox')
+                .attr('checked', 'checked')
+                .attr('class', 'filterActivation')
+                .attr('id', 'turnRestriction');
+            var restriction_formWrap = restriction_form.append('form')
+                .attr('class', 'filterForm optionsContainer');
+            var restriction_highlyProbableContainer = restriction_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            restriction_highlyProbableContainer.append('input')
+                .attr('id', 'C1')
+                .attr('type', 'checkbox')
+                .attr('checked', 'checked');
+            restriction_highlyProbableContainer.append('label')
+                .attr('for', 'C1')
+                .text('Highly Probable');
+            var restriction_probableContainer = restriction_formWrap.append('div')
+                .attr('class', 'tel_displayInline');
+            restriction_probableContainer.append('input')
+                .attr('id', 'C2')
+                .attr('type', 'checkbox');
+            restriction_probableContainer.append('label')
+                .attr('for', 'C2')
+                .text('Probable');
+            //  END 2st container div
+
+            // ++++++++++++
+            // events
+            // ++++++++++++
+
+            d3.select('#oneWay').on('click', function() {
+                if (d3.select('#oneWay').property('checked')) {
+                    selectedTypes.push('dof');
+                    //---
+                    dofSelectedDetails = dofDetails.slice(0);
+                    d3.select('#dofFilter #C1').property('checked', true);
+                    d3.select('#dofFilter #C2').property('checked', true);
+                    d3.select('#dofFilter #C3').property('checked', true);
+                } else {
+                    selectedTypes.splice(selectedTypes.indexOf('dof'), 1);
+                    //---
+                    dofSelectedDetails.length = 0;
+                    d3.select('#dofFilter #C1').property('checked', false);
+                    d3.select('#dofFilter #C2').property('checked', false);
+                    d3.select('#dofFilter #C3').property('checked', false);
+                }
+                render(d3.select('.layer-telenav'));
+            });
+
+            d3.selectAll('#dofFilter form input').on('click', function() {
+                var allCheckboxes = d3.selectAll('#dofFilter form input')[0];
+                if (d3.select('#dofFilter #' + d3.event.target.id).property('checked')) {
+                    if (!d3.select('#oneWay').property('checked')) {
+                        d3.select('#oneWay').property('checked', true);
+                        selectedTypes.push('dof');
+                    }
+                    dofSelectedDetails.push(d3.event.target.id);
+                } else {
+                    var noneSelected = true;
+                    var checkedItems = d3.selectAll('#dofFilter form input:checked')[0];
+                    if (checkedItems.length == 0) {
+                        d3.select('#oneWay').property('checked', false);
+                        selectedTypes.splice(selectedTypes.indexOf('dof'), 1);
+                    }
+                    dofSelectedDetails.splice(dofSelectedDetails.indexOf(d3.event.target.id), 1);
+                }
+                render(d3.select('.layer-telenav'));
+            });
+
+            d3.selectAll('#mrFilter form input').on('click', function() {
+                var allCheckboxes = d3.selectAll('#mrFilter form input')[0];
+                if (d3.select('#mrFilter #' + d3.event.target.id).property('checked')) {
+                    if (!d3.select('#missingRoads').property('checked')) {
+                        d3.select('#missingRoads').property('checked', true);
+                        selectedTypes.push('mr');
+                    }
+                    mrSelectedDetails.push(d3.event.target.id);
+                } else {
+                    var noneSelected = true;
+                    var checkedItems = d3.selectAll('#mrFilter form input:checked')[0];
+                    if (checkedItems.length == 0) {
+                        d3.select('#missingRoads').property('checked', false);
+                        selectedTypes.splice(selectedTypes.indexOf('mr'), 1);
+                    }
+                    mrSelectedDetails.splice(mrSelectedDetails.indexOf(d3.event.target.id), 1);
+                }
+                render(d3.select('.layer-telenav'));
+            });
+
+            d3.selectAll('#trFilter form input').on('click', function() {
+                var allCheckboxes = d3.selectAll('#trFilter form input')[0];
+                if (d3.select('#trFilter #' + d3.event.target.id).property('checked')) {
+                    if (!d3.select('#turnRestriction').property('checked')) {
+                        d3.select('#turnRestriction').property('checked', true);
+                        selectedTypes.push('tr');
+                    }
+                    trSelectedDetails.push(d3.event.target.id);
+                } else {
+                    var noneSelected = true;
+                    var checkedItems = d3.selectAll('#trFilter form input:checked')[0];
+                    if (checkedItems.length == 0) {
+                        d3.select('#turnRestriction').property('checked', false);
+                        selectedTypes.splice(selectedTypes.indexOf('tr'), 1);
+                    }
+                    trSelectedDetails.splice(trSelectedDetails.indexOf(d3.event.target.id), 1);
+                }
+                render(d3.select('.layer-telenav'));
+            });
+
+            d3.select('#missingRoads').on('click', function() {
+                if (d3.select('#missingRoads').property('checked')) {
+                    selectedTypes.push('mr');
+                    //---
+                    mrSelectedDetails = mrDetails.slice(0);
+                    d3.select('#mrFilter #ROAD').property('checked', true);
+                    d3.select('#mrFilter #PARKING').property('checked', true);
+                    d3.select('#mrFilter #BOTH').property('checked', true);
+                    d3.select('#mrFilter #WATER').property('checked', true);
+                    d3.select('#mrFilter #PATH').property('checked', true);
+                } else {
+                    selectedTypes.splice(selectedTypes.indexOf('mr'), 1);
+                    //---
+                    mrSelectedDetails.length = 0;
+                    d3.select('#mrFilter #ROAD').property('checked', false);
+                    d3.select('#mrFilter #PARKING').property('checked', false);
+                    d3.select('#mrFilter #BOTH').property('checked', false);
+                    d3.select('#mrFilter #WATER').property('checked', false);
+                    d3.select('#mrFilter #PATH').property('checked', false);
+                }
+                render(d3.select('.layer-telenav'));
+            });
+
+            d3.select('#turnRestriction').on('click', function() {
+                if (d3.select('#turnRestriction').property('checked')) {
+                    selectedTypes.push('tr');
+                    //---
+                    trSelectedDetails = trDetails.slice(0);
+                    d3.select('#trFilter #C1').property('checked', true);
+                    d3.select('#trFilter #C2').property('checked', true);
+                } else {
+                    selectedTypes.splice(selectedTypes.indexOf('tr'), 1);
+                    //---
+                    trSelectedDetails.length = 0;
+                    d3.select('#trFilter #C1').property('checked', false);
+                    d3.select('#trFilter #C2').property('checked', false);
+                }
+                render(d3.select('.layer-telenav'));
+            });
+
+            d3.selectAll('#statusFilter div').on('click', function() {
+                _editPanel.status = d3.event.currentTarget.getAttribute('data-filter-type');
+                d3.selectAll('#statusFilter div').classed('selected', false);
+                d3.select('#statusFilter div[data-filter-type=' + _editPanel.status + ']').classed('selected', true);
+                render(d3.select('.layer-telenav'));
+            });
+
+            d3.select('#saveComment').on('click', _editPanel.saveComment);
+
+            d3.selectAll('#statusSetter div').on('click', function() {
+                var newStatus = d3.event.currentTarget.getAttribute('data-filter-type');
+                d3.selectAll('#statusSetter div').classed('selected', false);
+                d3.select('#statusSetter div[data-filter-type=' + _editPanel.status + ']').classed('selected', true);
+                _editPanel.setStatus.call(_editPanel, newStatus);
+            });
+
+            toggleMode(mode);
+        };
+
+        this.toggleEditable = function() {
+            switch (mode) {
+                case 'active':
+                case 'slected':
+                    toggleMode('inactive');
+                    break;
+                case 'inactive':
+                    toggleMode('active');
+                    break;
+                case 'heatmap':
+                default:
+            }
         };
 
         this.enableActivationSwitch = function(enable) {
-            var activeButton = d3.select('#telenav-active');
-            var inactiveButton = d3.select('#telenav-inactive');
-            var owDot = d3.select('#telenav-oneWay-headerDot');
-            var mrwDot = d3.select('#telenav-missingRoad-headerDot');
-            var trDot = d3.select('#telenav-turnRestriction-headerDot');
-
-            var roadMr = d3.select('#telenav_roadMr');
-            var parkingMr = d3.select('#telenav_parkingMr');
-            var bothMr = d3.select('#telenav_bothMr');
-            var waterMr = d3.select('#telenav_waterMr');
-            var pathMr = d3.select('#telenav_pathMr');
-
-            if (_editPanel.editMode) {
-                roadMr.classed('editMode', true);
-                parkingMr.classed('editMode', true);
-                bothMr.classed('editMode', true);
-                waterMr.classed('editMode', true);
-                pathMr.classed('editMode', true);
-            } else {
-                roadMr.classed('editMode', false);
-                parkingMr.classed('editMode', false);
-                bothMr.classed('editMode', false);
-                waterMr.classed('editMode', false);
-                pathMr.classed('editMode', false);
-            }
-
-            if (enable) {
-                inactiveButton.style('opacity', '1');
-                activeButton.style('opacity', '1');
-                inactiveButton.on('click', _editPanel.onActivationSwitchClick);
-                activeButton.on('click', _editPanel.onActivationSwitchClick);
-                owDot.style('visibility', 'hidden');
-                mrwDot.style('visibility', 'hidden');
-                trDot.style('visibility', 'hidden');
-
-                roadMr.classed('showShade', true);
-                parkingMr.classed('showShade', true);
-                bothMr.classed('showShade', true);
-                waterMr.classed('showShade', true);
-                pathMr.classed('showShade', true);
-            } else {
-                inactiveButton.style('opacity', '0.2');
-                activeButton.style('opacity', '0.2');
-                inactiveButton.on('click', null);
-                activeButton.on('click', null);
-                owDot.style('visibility', 'visible');
-                mrwDot.style('visibility', 'visible');
-                trDot.style('visibility', 'visible');
-
-                roadMr.classed('showShade', false);
-                parkingMr.classed('showShade', false);
-                bothMr.classed('showShade', false);
-                waterMr.classed('showShade', false);
-                pathMr.classed('showShade', false);
-            }
+            renderActivationSwitch(enable);
         };
 
-        this.onActivationSwitchClick = function() {
-            if(!_editPanel.editMode){
-                _editPanel.toggleEditMode(true);
-            } else {
-                _editPanel.toggleEditMode(false);
-            }
-        }
+        this.deselectAll = function(redraw) {
+            visibleItems.deselectAll(redraw);
+            this.goToMain();
+        };
 
         this.showSiblings = function(siblings) {
+            if (siblings === null) {
+                d3.select('#siblingsPanel').classed('hide', true);
+                this.siblingsShown = false;
+                return;
+            }
+            this.siblingsShown = true;
             var selected = siblings.selected,
                 selectedConfidenceLvl;
             siblings = siblings.siblings;
@@ -1032,6 +1887,12 @@ iD.TelenavLayer = function (context) {
                 d3.select('#siblingsPanel').classed('hide', false);
                 var listElement = d3.select('#siblingsList');
                 listElement.html('');
+                // a sort is needed so that the item list keeps the same
+                siblings.sort(function(a, b) {
+                    if (a.id > b.id) return -1;
+                    if (a.id < b.id) return 1;
+                    return 0;
+                });
                 for (var i = 0; i < siblings.length; i++) {
                     var element = listElement.append('li').attr('data-id', siblings[i].id);
                     if (selected == siblings[i].id) {
@@ -1058,17 +1919,12 @@ iD.TelenavLayer = function (context) {
 
                     element.on('click', function() {
                         var item = null;
-                        //for (var i = 0; i < combinedItems.length; i++) {
-                        //    if (combinedItems[i].id === d3.event.currentTarget.attributes[0].nodeValue) {
-                        //        item = combinedItems[i];
-                        //    }
-                        //}
                         for (var i = 0; i < visibleItems.items.length; i++) {
                             if (visibleItems.items[i].id === d3.event.currentTarget.attributes[0].nodeValue) {
                                 item = visibleItems.items[i];
                             }
                         }
-                        MapItem.handleSelection(item);
+                        item.handleSelection();
                     });
                 }
             } else {
@@ -1101,43 +1957,10 @@ iD.TelenavLayer = function (context) {
             this._location = 'EDIT';
         };
 
-        this.goToMore = function() {
-            switch (this.getLocation()) {
-                case 'MAIN':
-                    d3.select('.telenavwrap')
-                        .transition()
-                        .style('transform', 'translate3d(-' + this._panelWidth() + 'px, 0px,  0px)');
-                    break;
-                case 'EDIT':
-                    d3.select('.telenavwrap')
-                        .transition()
-                        .style('transform', 'translate3d(-' + 2 * this._panelWidth() + 'px, 0px,  0px)');
-                    break;
-                case 'MORE':
-                    break;
-            }
-            this._location = 'MORE';
-        };
-
         this.selectedItemDetails = function selectedItemDetails(item){
             var confidenceLvl;
-            switch (item.status) {
-                case 'OPEN':
-                    d3.select('#ch_open').attr('checked', 'checked');
-                    d3.select('#ch_solved').attr('checked', null);
-                    d3.select('#ch_invalid').attr('checked', null);
-                    break;
-                case 'SOLVED':
-                    d3.select('#ch_open').attr('checked', null);
-                    d3.select('#ch_solved').attr('checked', 'checked');
-                    d3.select('#ch_invalid').attr('checked', null);
-                    break;
-                case 'INVALID':
-                    d3.select('#ch_open').attr('checked', null);
-                    d3.select('#ch_solved').attr('checked', null);
-                    d3.select('#ch_invalid').attr('checked', 'checked');
-                    break;
-            }
+            d3.selectAll('#statusSetter div').classed('selected', false);
+            d3.select('#statusSetter div[data-filter-type=' + this.status + ']').classed('selected', true);
             switch (item.className){
                 case 'TurnRestrictionItem':
                     switch (item.confidenceLevel) {
@@ -1256,6 +2079,9 @@ iD.TelenavLayer = function (context) {
 
         this.setStatus = function(status) {
 
+            d3.selectAll('#statusSetter div').classed('selected', false);
+            d3.select('#statusSetter div[data-filter-type=' + status + ']').classed('selected', true);
+
             var This = this;
 
             context.connection().userDetails(function(err, user) {
@@ -1264,34 +2090,17 @@ iD.TelenavLayer = function (context) {
                         if (err) {
                             alert('Authentication Error');
                         } else {
+                            d3.select('#telenavHeaderLogin').classed('hidden', true);
+                            d3.select('#telenavHeaderLogout').classed('hidden', false);
                             This.setStatus(status);
                         }
                     });
                     return;
                 }
 
-                //var userLink = d3.select(document.createElement('div'));
-                //
-                //if (user.image_url) {
-                //    userLink.append('img')
-                //        .attr('src', user.image_url)
-                //        .attr('class', 'icon pre-text user-icon');
-                //}
-                //
-                //userLink.append('a')
-                //    .attr('class','user-info')
-                //    .text(user.display_name)
-                //    .attr('href', context.connection().userURL(user.display_name))
-                //    .attr('tabindex', -1)
-                //    .attr('target', '_blank');
-                //
-                //prose.html(t('commit.upload_explanation_with_user', {user: userLink.html()}));
-
                 status = status.toUpperCase();
-                //for (var i = 0; i < selectedItems.length; i++) {
-                for (var i = 0; i < selectedItems2.getSize(); i++) {
-                    //var currentItem = selectedItems[i];
-                    var currentItem = selectedItems2.getItem(i);
+                for (var i = 0; i < visibleItems.totalSelectedItems.length; i++) {
+                    var currentItem = visibleItems.getTotalSelectionItem(i);
 
                     var dataToPost = {
                         username: user.display_name,
@@ -1301,13 +2110,12 @@ iD.TelenavLayer = function (context) {
 
                     var responseHandler = function(err, rawData) {
                         var data = JSON.parse(rawData.response);
-                        console.log("got response", data);
                     };
 
                     switch (currentItem.className) {
                         case 'DirectionOfFlowItem':
                             dataToPost.roadSegments = currentItem.getIdentifier();
-                            d3.xhr('http://fcd-ss.skobbler.net:2680/directionOfFlowService_test/comment')
+                            d3.xhr(API_OW_SERVER + '/comment')
                                 .header("Content-Type", "application/json")
                                 .post(
                                     JSON.stringify(dataToPost),
@@ -1316,7 +2124,7 @@ iD.TelenavLayer = function (context) {
                             break;
                         case 'MissingRoadItem':
                             dataToPost.tiles = currentItem.getIdentifier();
-                            d3.xhr('http://fcd-ss.skobbler.net:2680/missingGeoService_test/comment')
+                            d3.xhr(API_MR_SERVER + '/comment')
                                 .header("Content-Type", "application/json")
                                 .post(
                                     JSON.stringify(dataToPost),
@@ -1325,7 +2133,7 @@ iD.TelenavLayer = function (context) {
                             break;
                         case 'TurnRestrictionItem':
                             dataToPost.targetIds = currentItem.getIdentifier();
-                            d3.xhr('http://fcd-ss.skobbler.net:2680/turnRestrictionService_test/comment')
+                            d3.xhr(API_TR_SERVER + '/comment')
                                 .header("Content-Type", "application/json")
                                 .post(
                                     JSON.stringify(dataToPost),
@@ -1349,6 +2157,8 @@ iD.TelenavLayer = function (context) {
                         if (err) {
                             alert('Authentication Error');
                         } else {
+                            d3.select('#telenavHeaderLogin').classed('hidden', true);
+                            d3.select('#telenavHeaderLogout').classed('hidden', false);
                             This.saveComment();
                         }
                     });
@@ -1356,10 +2166,8 @@ iD.TelenavLayer = function (context) {
                 }
                 var comment = d3.select('#commentText').property('value');
 
-                //for (var i = 0; i < selectedItems.length; i++) {
-                for (var i = 0; i < selectedItems2.getSize(); i++) {
-                //    var currentItem = selectedItems[i];
-                    var currentItem = selectedItems2.getItem(i);
+                for (var i = 0; i < visibleItems.totalSelectedItems.length; i++) {
+                    var currentItem = visibleItems.getTotalSelectionItem(i);
 
                     var dataToPost = {
                         username: 'Tudor009',
@@ -1369,13 +2177,12 @@ iD.TelenavLayer = function (context) {
                     var responseHandler = function (err, rawData) {
                         var data = JSON.parse(rawData.response);
                         d3.select('#commentText').value('');
-                        console.log("got response", data);
                     };
 
                     switch (currentItem.className) {
                         case 'DirectionOfFlowItem':
                             dataToPost.roadSegments = currentItem.getIdentifier();
-                            d3.xhr('http://fcd-ss.skobbler.net:2680/directionOfFlowService_test/comment')
+                            d3.xhr(API_OW_SERVER + '/comment')
                                 .header("Content-Type", "application/json")
                                 .post(
                                     JSON.stringify(dataToPost),
@@ -1384,7 +2191,7 @@ iD.TelenavLayer = function (context) {
                             break;
                         case 'MissingRoadItem':
                             dataToPost.tiles = currentItem.getIdentifier();
-                            d3.xhr('http://fcd-ss.skobbler.net:2680/missingGeoService_test/comment')
+                            d3.xhr(API_MR_SERVER + '/comment')
                                 .header("Content-Type", "application/json")
                                 .post(
                                     JSON.stringify(dataToPost),
@@ -1393,7 +2200,7 @@ iD.TelenavLayer = function (context) {
                             break;
                         case 'TurnRestrictionItem':
                             dataToPost.targetIds = currentItem.getIdentifier();
-                            d3.xhr('http://fcd-ss.skobbler.net:2680/turnRestrictionService_test/comment')
+                            d3.xhr(API_TR_SERVER + '/comment')
                                 .header("Content-Type", "application/json")
                                 .post(
                                     JSON.stringify(dataToPost),
@@ -1407,8 +2214,7 @@ iD.TelenavLayer = function (context) {
         };
 
     };
-
-    var _editPanel = new EditPanel();
+    var _editPanel = null;
 
     var _synchClusterCallbacks = function(error, data, type) {
 
@@ -1427,19 +2233,30 @@ iD.TelenavLayer = function (context) {
             var g = svg.selectAll('g.cluster')
                 .data(heatMap.clusters, function(cluster) {
                     return cluster.id;
-                    //return item;
                 });
 
             var enter = g.enter().append('g')
-                .attr('class', ClusterCircle.transformClass)
+                .attr('class', function(item) {
+                    return item.transformClass();
+                })
                 .classed('cluster', true)
-                .attr('id', ClusterCircle.transformId);
+                .attr('id', function(item) {
+                    return item.transformId();
+                });
 
             var circle = enter.append('circle')
-                .attr('class', ClusterCircle.transformType)
-                .attr('cx', ClusterCircle.transformX)
-                .attr('cy', ClusterCircle.transformY)
-                .attr('r', ClusterCircle.transformR);
+                .attr('class', function(item) {
+                    return item.transformType();
+                })
+                .attr('cx', function(item) {
+                    return item.transformX();
+                })
+                .attr('cy', function(item) {
+                    return item.transformY();
+                })
+                .attr('r', function(item) {
+                    return item.transformR();
+                });
 
             g.exit()
                 .remove();
@@ -1448,264 +2265,496 @@ iD.TelenavLayer = function (context) {
 
     var _synchCallbacks = function(error, data) {
 
+        if (error) {
+            clearAllLayers();
+            return;
+        }
+
         if (data.hasOwnProperty('roadSegments')) {
             visibleItems.loadOneWays(data.roadSegments);
-            //for (var i = 0; i < data.roadSegments.length; i++) {
-            //    combinedItems.push(new DirectionOfFlowItem(
-            //        data.roadSegments[i]
-            //    ));
-            //}
-
         }
         if (data.hasOwnProperty('tiles')) {
             visibleItems.loadMissingRoads(data.tiles);
-            //for (var i = 0; i < data.tiles.length; i++) {
-            //    combinedItems.push(new MissingRoadItem(
-            //        data.tiles[i]
-            //    ));
-            //}
         }
         if (data.hasOwnProperty('entities')) {
             visibleItems.loadTurnRestrictions(data.entities);
-            //for (var i = 0; i < data.entities.length; i++) {
-            //    combinedItems.push(new TurnRestrictionItem(
-            //        data.entities[i]
-            //    ));
-            //}
         }
 
-
-
         if (!--requestCount) {
-            if (error) {
-                svg.selectAll('g.item')
-                    .remove();
-                return;
-            }
-            selectedItems2.update(visibleItems.items);
 
-            var g = svg.selectAll('g.item')
-                .data(visibleItems.items, function(item) {
-                    return item.id;
-                    //return item;
-                });
+            visibleItems.update();
 
-
-            var enter = g.enter().append('g')
-                .attr('class', MapItem.transformClass)
-                .attr('id', MapItem.transformId);
-
-            var dOFs = enter.filter(function(item) {
-                return item.isA('DirectionOfFlowItem');
-            });
-            var mRs = enter.filter(function(item) {
-                return item.isA('MissingRoadItem');
-            });
-            var tRs = enter.filter(function(item) {
-                return item.isA('TurnRestrictionItem');
-            });
-
-            var dofPoly = dOFs.append('polyline').attr('class', 'main');
-            dofPoly.attr('points', DirectionOfFlowItem.transformLinePoints);
-            var owHighlight = dOFs.append('polyline').attr('class', 'selectable');
-            owHighlight.attr('points', DirectionOfFlowItem.transformLinePoints);
-
-            mRs.html(function(d) {
-                var html = '';
-                html += '<rect x=' + MissingRoadItem.computeTileX(d.getX(), d.getY())
-                    + ' y=' + MissingRoadItem.computeTileY(d.getX(), d.getY())
-                    + ' width=' + MissingRoadItem.computeTileWidth(d.getX(), d.getY())
-                    + ' height=' + MissingRoadItem.computeTileHeight(d.getX(), d.getY())
-                    + '></rect>';
-                for (var i = 0; i < d._points.length; i++) {
-                    var cx = MissingRoadItem.computeX(d._points[i].lat, d._points[i].lon);
-                    var cy = MissingRoadItem.computeY(d._points[i].lat, d._points[i].lon);
-                    html += '<circle cx=' + cx + ' cy=' + cy + ' r=3></circle>';
-                }
-                html += '<rect x=' + MissingRoadItem.computeTileX(d.getX(), d.getY())
-                    + ' y=' + MissingRoadItem.computeTileY(d.getX(), d.getY())
-                    + ' width=' + MissingRoadItem.computeTileWidth(d.getX(), d.getY())
-                    + ' height=' + MissingRoadItem.computeTileHeight(d.getX(), d.getY())
-                    + ' class="selectable"'
-                    + '></rect>';
-                return html;
-            });
-
-            var trPolyIn1 = tRs.append('polyline');
-            trPolyIn1.attr('points', TurnRestrictionItem.transformLinePointsIn1);
-            trPolyIn1.attr('class', 'wayIn1');
-            var trPolyIn2 = tRs.append('polyline');
-            trPolyIn2.attr('points', TurnRestrictionItem.transformLinePointsIn2);
-            trPolyIn2.attr('class', 'wayIn2');
-            tRs.append('rect').attr('class', 'noInRect')
-                .attr('width', TurnRestrictionItem.transformInNoRectWidth)
-                .attr('x', TurnRestrictionItem.transformInNoRectX)
-                .attr('y', TurnRestrictionItem.transformInNoRectY);
-            tRs.append('text').attr('class', 'inNo')
-                .attr('x', TurnRestrictionItem.transformInNoX)
-                .attr('y', TurnRestrictionItem.transformInNoY)
-                .html(TurnRestrictionItem.transformInNo);
-            tRs.append('rect').attr('class', 'noOutRect')
-                .attr('width', TurnRestrictionItem.transformOutNoRectWidth)
-                .attr('x', TurnRestrictionItem.transformOutNoRectX)
-                .attr('y', TurnRestrictionItem.transformOutNoRectY);
-            tRs.append('text').attr('class', 'outNo')
-                .attr('x', TurnRestrictionItem.transformOutNoX)
-                .attr('y', TurnRestrictionItem.transformOutNoY)
-                .html(TurnRestrictionItem.transformOutNo);
-            var trPolyOut = tRs.append('polyline');
-            trPolyOut.attr('points', TurnRestrictionItem.transformLinePointsOut);
-            //trPolyOut.attr('marker-start', 'url(#telenav-tr-marker)');
-            trPolyOut.attr('class', 'wayOut');
-            var trCircle = tRs.append('circle')
-                .attr('class', 'telenav-tr-marker')
-                .attr('cx', TurnRestrictionItem.transformX)
-                .attr('cy', TurnRestrictionItem.transformY)
-                .attr('r', '20');
-            var trSelCircle = tRs.append('circle').attr('class', 'selectable')
-                .attr('cx', TurnRestrictionItem.transformX)
-                .attr('cy', TurnRestrictionItem.transformY)
-                .attr('r', '20');
-
-            dOFs.on('click', MapItem.handleSelection);
-            mRs.on('click', MapItem.handleSelection);
-            tRs.on('click', MapItem.handleSelection);
-
-            //dOFs.on('mouseover', MapItem.handleMouseOver);
-            //mRs.on('mouseover', MapItem.handleMouseOver);
-            //tRs.on('mouseover', MapItem.handleMouseOver);
-
-            //dOFs.on('mouseout', MapItem.handleMouseOut);
-            //mRs.on('mouseout', MapItem.handleMouseOut);
-            //tRs.on('mouseout', MapItem.handleMouseOut);
-
-            trNodes.render(visibleItems.items);
-
-            g.exit()
-                .remove();
+            drawItems('normal');
+            drawClusteredItems();
+            drawItems('selected');
         }
 
     };
 
+    function drawClusteredItems() {
+        var data = svg.select('g.clusteredItemsLayer').selectAll('g.item')
+            .data(visibleItems.clusteredItems, function(item) {
+                return item.id;
+            });
+
+
+        var clusterElement = data.enter().append('g')
+            .attr('class', function(item) {
+                return item.transformClass();
+            })
+            .attr('id', function(item) {
+                return item.transformId();
+            });
+
+        var circle = clusterElement.append('circle')
+            .attr('class', 'main')
+            .attr('cx', function(item) {
+                return item.transformX();
+            })
+            .attr('cy', function(item) {
+                return item.transformY();
+            })
+            .attr('r', function(item) {
+                return item.getCircleRadius();
+            });
+        var selCircle = clusterElement.append('circle')
+            .attr('class', 'selectable')
+            .attr('cx', function(item) {
+                return item.transformX();
+            })
+            .attr('cy', function(item) {
+                return item.transformY();
+            })
+            .attr('r', function(item) {
+                return item.getCircleRadius();
+            });
+        var textElem = clusterElement.append('text')
+            .attr('x', function(item) {
+                return item.transformX(-5);
+            })
+            .attr('y', function(item) {
+                return item.transformY(7);
+            })
+            .html(function(item) {
+                return item.transformAmount();
+            });
+
+        clusterElement.on('mouseover', function(item) {
+            item.highlight(true);
+        });
+
+        data.exit()
+            .remove();
+    }
+
+    function drawItems(type) {
+        var data = null;
+        switch (type) {
+            case 'normal':
+                data = svg.select('g.normalItemsLayer').selectAll('g.item')
+                    .data(visibleItems.normalItems, function(item) {
+                        return item.id;
+                    });
+                break;
+            case 'selected':
+                data = svg.select('g.selectedItemsLayer').selectAll('g.item')
+                    .data(visibleItems.selectedItems, function(item) {
+                        return item.id;
+                    });
+                break;
+        }
+
+
+        var enter = data.enter().append('g')
+            .attr('class', function(item) {
+                return item.transformClass();
+            })
+            .attr('id', function(item) {
+                return item.transformId();
+            });
+
+        var dOFs = enter.filter(function(item) {
+            return item.isA('DirectionOfFlowItem');
+        });
+        var mRs = enter.filter(function(item) {
+            return item.isA('MissingRoadItem');
+        });
+        var tRs = enter.filter(function(item) {
+            return item.isA('TurnRestrictionItem');
+        });
+
+        var dofPoly = dOFs.append('polyline');
+        dofPoly.attr('class', 'main');
+        switch (type) {
+            case 'normal':
+                dofPoly.style('marker-end', 'url(#telenav-arrow-orange)');
+                break;
+            case 'selected':
+                dofPoly.style('marker-end', 'url(#telenav-arrow-purple)');
+                break;
+        }
+
+        dofPoly.attr('points', function(item) {
+            return item.transformLinePoints();
+        });
+        var owHighlight = dOFs.append('polyline').attr('class', 'selectable');
+        owHighlight.attr('points', function(item) {
+            return item.transformLinePoints();
+        });
+
+        mRs.html(function(d) {
+            var html = '';
+            html += '<rect x=' + d.computeTileX()
+                + ' y=' + d.computeTileY()
+                + ' width=' + d.computeTileWidth()
+                + ' height=' + d.computeTileHeight()
+                + '></rect>';
+            for (var i = 0; i < d._points.length; i++) {
+                var cx = d.computeX(i);
+                var cy = d.computeY(i);
+                html += '<circle cx=' + cx + ' cy=' + cy + ' r=3></circle>';
+            }
+            html += '<rect x=' + d.computeTileX()
+                + ' y=' + d.computeTileY()
+                + ' width=' + d.computeTileWidth()
+                + ' height=' + d.computeTileHeight()
+                + ' class="selectable"'
+                + '></rect>';
+            return html;
+        });
+
+        var trPolyIn1 = tRs.append('polyline');
+        trPolyIn1.attr('points', function(item) {
+            return item.transformLinePointsIn1();
+        });
+        trPolyIn1.attr('class', 'wayIn1');
+        trPolyIn1.style('marker-end', 'url(#telenav-arrow-green)');
+        var trPolyIn2 = tRs.append('polyline');
+        trPolyIn2.attr('points', function(item) {
+            return item.transformLinePointsIn2();
+        });
+        trPolyIn2.attr('class', 'wayIn2');
+        tRs.append('rect').attr('class', 'noInRect')
+            .attr('width', function(item) {
+                return item.transformInNoRectWidth();
+            })
+            .attr('height', '16')
+            .attr('x', function(item) {
+                return item.transformInNoRectX();
+            })
+            .attr('y', function(item) {
+                return item.transformInNoRectY();
+            });
+        tRs.append('text').attr('class', 'inNo')
+            .attr('x', function(item) {
+                return item.transformInNoX();
+            })
+            .attr('y', function(item) {
+                return item.transformInNoY()
+            })
+            .html(function(item) {
+                return item.transformInNo();
+            });
+        tRs.append('rect').attr('class', 'noOutRect')
+            .attr('width', function(item) {
+                return item.transformOutNoRectWidth();
+            })
+            .attr('height', '16')
+            .attr('x', function(item) {
+                return item.transformOutNoRectX();
+            })
+            .attr('y', function(item) {
+                return item.transformOutNoRectY();
+            });
+        tRs.append('text').attr('class', 'outNo')
+            .attr('x', function(item) {
+                return item.transformOutNoX();
+            })
+            .attr('y', function(item) {
+                return item.transformOutNoY();
+            })
+            .html(function(item) {
+                return item.transformOutNo();
+            });
+        var trPolyOut = tRs.append('polyline');
+        trPolyOut.attr('points', function(item) {
+            return item.transformLinePointsOut();
+        });
+        trPolyOut.attr('class', 'wayOut');
+        trPolyOut.style('marker-end', 'url(#telenav-arrow-red)');
+        var trCircle = tRs.append('circle')
+            .attr('class', 'telenav-tr-marker')
+            .attr('cx', function(item) {
+                return item.transformX();
+            })
+            .attr('cy', function(item) {
+                return item.transformY();
+            })
+            .attr('r', function(item) {
+                return item.getCircleRadius();
+            });
+        var trSelCircle = tRs.append('circle').attr('class', 'selectable')
+            .attr('cx', function(item) {
+                return item.transformX();
+            })
+            .attr('cy', function(item) {
+                return item.transformY();
+            })
+            .attr('r', function(item) {
+                return item.getCircleRadius();
+            });
+
+        dOFs.on('mouseover', function(item) {
+            item.highlight(true);
+        });
+        mRs.on('mouseover', function(item) {
+            item.highlight(true);
+        });
+        tRs.on('mouseover', function(item) {
+            item.highlight(true);
+        });
+
+        data.exit()
+            .remove();
+    };
+
     function render(selection) {
 
-        var zoom = Math.floor(context.map().zoom());
+        // object initialization
+        if (_editPanel === null) {
+            _editPanel = new EditPanel();
+            _editPanel.init();
+        }
 
-        //if (zoom >= 15) {
-            d3.select("#sidebar").classed('telenavPaneActive', enable);
-            d3.select(".pane-telenav").classed('hidden', !enable);
-        //} else {
-            //d3.select("#sidebar").classed('telenavPaneActive', false);
-            //d3.select(".pane-telenav").classed('hidden', true);
-        //}
+        var realZoom = context.map().zoom();
+        var zoom = Math.floor(realZoom);
+
+        var extent = context.map().extent();
+
+        var south = extent[0][1];
+        var north = extent[1][1];
+        var west = extent[0][0];
+        var east = extent[1][0];
+
+        if (south > 90) south = 90;
+        if (south < -90) south = -90;
+        if (north > 90) north = 90;
+        if (north < -90) north = -90;
+        if (west > 180) west = 180;
+        if (west < -180) west = -180;
+        if (east > 180) east = 180;
+        if (east < -180) east = -180;
+
+        var boundingBoxUrlFragments = '?south=' +
+            south + '&north=' + north + '&west=' +
+            west + '&east=' + east + '&zoom=' + zoom;
+
+
+        d3.select("#sidebar").classed('telenavPaneActive', enable);
+        d3.select(".pane-telenav").classed('hidden', !enable);
+        var telenavLayer = d3.select('.layer-telenav');
+        if (15 <= realZoom && realZoom < 15.5) {
+            telenavLayer.attr('data-zoom', 'z15p');
+        } else if (15.5 <= realZoom && realZoom < 16) {
+            telenavLayer.attr('data-zoom', 'z16m');
+        } else if (16 <= realZoom && realZoom < 16.5) {
+            telenavLayer.attr('data-zoom', 'z16p');
+        } else if (16.5 <= realZoom && realZoom < 17) {
+            telenavLayer.attr('data-zoom', 'z17m');
+        } else if (17 <= realZoom && realZoom < 17.5) {
+            telenavLayer.attr('data-zoom', 'z17p');
+        } else if (17.5 <= realZoom && realZoom < 18) {
+            telenavLayer.attr('data-zoom', 'z18m');
+        } else if (18 <= realZoom && realZoom < 18.5) {
+            telenavLayer.attr('data-zoom', 'z18p');
+        } else if (18.5 <= realZoom && realZoom < 19) {
+            telenavLayer.attr('data-zoom', 'z19m');
+        } else if (19 <= realZoom && realZoom < 19.5) {
+            telenavLayer.attr('data-zoom', 'z19p');
+        } else if (19.5 <= realZoom) {
+            telenavLayer.attr('data-zoom', 'z20m');
+        }
 
         svg = selection.selectAll('svg')
             .data([0]);
 
         svg.enter().append('svg');
 
-        // *****************************
-        // HANDLING OF CLICK DESELECTION
-        // *****************************
+
         svg.selectAll('g.deselectSurface')
             .remove();
-        var deselectionRectangle = svg
-            .insert('g', ':first-child')
-                .attr('class', 'deselectSurface')
-                .append('rect')
-                    .attr('width', svg.attr('width'))
-                    .attr('height', svg.attr('height'));
-        deselectionRectangle.on('click', function() {
-            if (selectedItems2.getSize() > 0) {
-                svg.selectAll('g').classed('selected', false);
-                selectedItems2.empty();
-                _editPanel.goToMain();
-            }
-        });
 
         // *****************************
         // HANDLING OF CLICK DESELECTION
         // *****************************
+        if (svg.selectAll('g.deselectSurface').empty()) {
+            svg
+                .insert('g', ':first-child')
+                .attr('class', 'deselectSurface')
+                .append('rect')
+                .attr('width', svg.attr('width'))
+                .attr('height', svg.attr('height'));
+            svg.selectAll('g.deselectSurface').on('click', function () {
+                //if (selectedItems.getSize() > 0) {
+                if (visibleItems.totalSelectedItems.length > 0) {
+                    //selectedItems.empty();
+                    visibleItems.deselectAll(true);
+                    _editPanel.goToMain();
+                }
+            });
+            svg.selectAll('g.deselectSurface').on('mouseover', function () {
+                svg.selectAll('g.highlightedItemLayer *').remove();
+            });
+        }
+
+        // *********************************
+        // ADDING LAYERS THE FIRST TIME ONLY
+        // *********************************
+        if (svg.selectAll('g.normalItemsLayer').empty()) {
+            svg
+                .append('g')
+                .attr('class', 'normalItemsLayer');
+        }
+        if (svg.selectAll('g.clusteredItemsLayer').empty()) {
+            svg
+                .append('g')
+                .attr('class', 'clusteredItemsLayer');
+        }
+        if (svg.selectAll('g.selectedItemsLayer').empty()) {
+            svg
+                .append('g')
+                .attr('class', 'selectedItemsLayer');
+        }
+        if (svg.selectAll('g.highlightedItemLayer').empty()) {
+            svg
+                .append('g')
+                .attr('class', 'highlightedItemLayer');
+        }
 
         svg.style('display', enable ? 'block' : 'none');
 
 
         if (!enable) {
 
-            svg.selectAll('g.item')
-                .remove();
+            clearAllLayers();
             svg.selectAll('g.cluster')
                 .remove();
 
             return;
         }
 
+        moveClusteredItems();
+
         var clusterCircles = svg.selectAll('.ClusterCircle > circle');
-        clusterCircles.attr('cx', ClusterCircle.transformX);
-        clusterCircles.attr('cy', ClusterCircle.transformY);
+        clusterCircles.attr('cx', function(item) {
+            return item.transformX();
+        });
+        clusterCircles.attr('cy', function(item) {
+            return item.transformY();
+        });
 
         var directionOfFlowPolylines = svg.selectAll('.DirectionOfFlowItem > polyline.main');
-        directionOfFlowPolylines.attr('points', DirectionOfFlowItem.transformLinePoints);
+        directionOfFlowPolylines.attr('points', function(item) {
+            return item.transformLinePoints();
+        });
         var owHighlight = svg.selectAll('.DirectionOfFlowItem > polyline.selectable');
-        owHighlight.attr('points', DirectionOfFlowItem.transformLinePoints);
+        owHighlight.attr('points', function(item) {
+            return item.transformLinePoints();
+        });
 
         var missingRoadsCircles = svg.selectAll('.MissingRoadItem');
         missingRoadsCircles.html(function(d) {
             var html = '';
-            html += '<rect x=' + MissingRoadItem.computeTileX(d.getX(), d.getY())
-                + ' y=' + MissingRoadItem.computeTileY(d.getX(), d.getY())
-                + ' width=' + MissingRoadItem.computeTileWidth(d.getX(), d.getY())
-                + ' height=' + MissingRoadItem.computeTileHeight(d.getX(), d.getY())
+            html += '<rect x=' + d.computeTileX()
+                + ' y=' + d.computeTileY()
+                + ' width=' + d.computeTileWidth()
+                + ' height=' + d.computeTileHeight()
                 + '></rect>';
             for (var i = 0; i < d._points.length; i++) {
-                var cx = MissingRoadItem.computeX(d._points[i].lat, d._points[i].lon);
-                var cy = MissingRoadItem.computeY(d._points[i].lat, d._points[i].lon);
+                var cx = d.computeX(i);
+                var cy = d.computeY(i);
                 html += '<circle cx=' + cx + ' cy=' + cy + ' r=3></circle>';
             }
-            html += '<rect x=' + MissingRoadItem.computeTileX(d.getX(), d.getY())
-                + ' y=' + MissingRoadItem.computeTileY(d.getX(), d.getY())
-                + ' width=' + MissingRoadItem.computeTileWidth(d.getX(), d.getY())
-                + ' height=' + MissingRoadItem.computeTileHeight(d.getX(), d.getY())
+            html += '<rect x=' + d.computeTileX()
+                + ' y=' + d.computeTileY()
+                + ' width=' + d.computeTileWidth()
+                + ' height=' + d.computeTileHeight()
                 + ' class="selectable"'
                 + '></rect>';
             return html;
         });
 
         var trCircle = svg.selectAll('.TurnRestrictionItem > circle');
-        trCircle.attr('cx', TurnRestrictionItem.transformX);
-        trCircle.attr('cy', TurnRestrictionItem.transformY);
+        trCircle.attr('cx', function(item) {
+            return item.transformX();
+        });
+        trCircle.attr('cy', function(item) {
+            return item.transformY();
+        });
+        trCircle.attr('r', function(item) {
+            return item.getCircleRadius();
+        });
         var trSelCircle = svg.selectAll('.TurnRestrictionItem > circle.selectable');
-        trSelCircle.attr('cx', TurnRestrictionItem.transformX);
-        trSelCircle.attr('cy', TurnRestrictionItem.transformY);
+        trSelCircle.attr('cx', function(item) {
+            return item.transformX();
+        });
+        trSelCircle.attr('cy', function(item) {
+            return item.transformY();
+        });
+        trSelCircle.attr('r', function(item) {
+            return item.getCircleRadius();
+        });
         var turnRestrictionPolylinesIn1 = svg.selectAll('.TurnRestrictionItem > polyline.wayIn1');
-        turnRestrictionPolylinesIn1.attr('points', TurnRestrictionItem.transformLinePointsIn1);
+        turnRestrictionPolylinesIn1.attr('points', function(item) {
+            return item.transformLinePointsIn1();
+        });
         var turnRestrictionPolylinesIn2 = svg.selectAll('.TurnRestrictionItem > polyline.wayIn2');
-        turnRestrictionPolylinesIn2.attr('points', TurnRestrictionItem.transformLinePointsIn2);
+        turnRestrictionPolylinesIn2.attr('points', function(item) {
+            return item.transformLinePointsIn2();
+        });
         var turnRestrictionPolylinesOut = svg.selectAll('.TurnRestrictionItem > polyline.wayOut');
-        turnRestrictionPolylinesOut.attr('points', TurnRestrictionItem.transformLinePointsOut);
-        //var turnRestrictionPolylinesHighlight = svg.selectAll('.TurnRestrictionItem > polyline.highlight');
-        //turnRestrictionPolylinesHighlight.attr('points', TurnRestrictionItem.transformLinePoints);
+        turnRestrictionPolylinesOut.attr('points', function(item) {
+            return item.transformLinePointsOut();
+        });
 
         var tRinNo = svg.selectAll('.TurnRestrictionItem > text.inNo');
         tRinNo
-            .attr('x', TurnRestrictionItem.transformInNoX)
-            .attr('y', TurnRestrictionItem.transformInNoY)
-            .html(TurnRestrictionItem.transformInNo);
+            .attr('x', function(item) {
+                return item.transformInNoX();
+            })
+            .attr('y', function(item) {
+                return item.transformInNoY()
+            })
+            .html(function(item) {
+                return item.transformInNo();
+            });
         var tRinNoInRect = svg.selectAll('.TurnRestrictionItem > rect.noInRect');
         tRinNoInRect
-            .attr('x', TurnRestrictionItem.transformInNoRectX)
-            .attr('y', TurnRestrictionItem.transformInNoRectY);
+            .attr('x', function(item) {
+                return item.transformInNoRectX();
+            })
+            .attr('y', function(item) {
+                return item.transformInNoRectY();
+            });
         var tRinNo = svg.selectAll('.TurnRestrictionItem > text.outNo');
         tRinNo
-            .attr('x', TurnRestrictionItem.transformOutNoX)
-            .attr('y', TurnRestrictionItem.transformOutNoY)
-            .html(TurnRestrictionItem.transformOutNo);
+            .attr('x', function(item) {
+                return item.transformOutNoX();
+            })
+            .attr('y', function(item) {
+                return item.transformOutNoY();
+            })
+            .html(function(item) {
+                return item.transformOutNo();
+            });
         var tRinNoOutRect = svg.selectAll('.TurnRestrictionItem > rect.noOutRect');
         tRinNoOutRect
-            .attr('x', TurnRestrictionItem.transformOutNoRectX)
-            .attr('y', TurnRestrictionItem.transformOutNoRectY);
-
-        var extent = context.map().extent();
+            .attr('x', function(item) {
+                return item.transformOutNoRectX();
+            })
+            .attr('y', function(item) {
+                return item.transformOutNoRectY();
+            });
 
         if (requestQueue.length > 0) {
             for (var i = 0; i < requestQueue.length; i++) {
@@ -1713,10 +2762,6 @@ iD.TelenavLayer = function (context) {
             }
             requestQueue.length = 0;
         }
-
-        var boundingBoxUrlFragments = '?south=' +
-            extent[0][1] + '&north=' + extent[1][1] + '&west=' +
-            extent[0][0] + '&east=' + extent[1][0] + '&zoom=' + zoom;
 
         var requestUrlQueue = [];
         var pushedTypes = [];
@@ -1737,14 +2782,13 @@ iD.TelenavLayer = function (context) {
                     break;
             }
             requestUrlQueue.push(
-                types[selectedTypes[i]] + boundingBoxUrlFragments + typesFragments + '&status=' + status + '&client=WEBAPP&version=1.2'
+                types[selectedTypes[i]] + boundingBoxUrlFragments + typesFragments + '&status=' + _editPanel.status + '&client=WEBAPP&version=1.2'
             );
             pushedTypes.push(selectedTypes[i]);
         }
 
         requestCount = requestUrlQueue.length;
-        //combinedItems.length = 0;
-        visibleItems = new VisibleItems();
+        visibleItems.items.length = 0;
 
         if ((zoom > 14) && (requestUrlQueue.length !== 0)) {
             svg.selectAll('g.cluster')
@@ -1754,25 +2798,57 @@ iD.TelenavLayer = function (context) {
             }
             _editPanel.enableActivationSwitch(true);
         } else if (requestUrlQueue.length !== 0) {
-            svg.selectAll('g.item')
-                .remove();
+            clearAllLayers();
             heatMap = new HeatMap(zoom);
             _editPanel.enableActivationSwitch(false);
+            _editPanel.deselectAll(false);
             for (var i = 0; i < requestUrlQueue.length; i++) {
                 var type = pushedTypes[i];
                 !function (type) {
                     requestQueue[i] = d3.json(requestUrlQueue[i], function (error, data) {
-                        _synchClusterCallbacks(error, data, type);
+                        if (typeof data != 'undefined') {
+                            _synchClusterCallbacks(error, data, type);
+                        }
                     });
                 }(type);
             }
         } else {
-            svg.selectAll('g.item')
-                .remove();
+            clearAllLayers();
             svg.selectAll('g.cluster')
                 .remove();
         }
+    };
+
+    function moveClusteredItems() {
+        var clusteredItems = svg.selectAll('.ClusteredItem > circle');
+        clusteredItems.attr('cx', function(item) {
+            return item.transformX();
+        });
+        clusteredItems.attr('cy', function(item) {
+            return item.transformY();
+        });
+        clusteredItems.attr('r', function(item) {
+            return item.getCircleRadius();
+        });
+        var clusteredItems = svg.selectAll('.ClusteredItem > text');
+        clusteredItems.attr('x', function(item) {
+            return item.transformX(-5);
+        });
+        clusteredItems.attr('y', function(item) {
+            return item.transformY(7);
+        });
     }
+
+    function clearAllLayers() {
+        svg.select('g.normalItemsLayer').selectAll('g')
+            .remove();
+        svg.select('g.selectedItemsLayer').selectAll('g')
+            .remove();
+        svg.select('g.clusteredItemsLayer').selectAll('g')
+            .remove();
+        svg.select('g.normalItemsLayer').selectAll('g.item')
+            .remove();
+    };
 
     render.enable = function(_) {
         if (!arguments.length) return enable;
@@ -1785,562 +2861,6 @@ iD.TelenavLayer = function (context) {
         svg.dimensions(_);
         return render;
     };
-
-    var buildPane = function() {
-
-        var div = d3.selectAll('.pane_telenav')
-            .data([0]);
-
-        var enter = div.enter().append('div')
-            .attr('class', 'pane-telenav col4 hidden');
-        var telenavWrapPanel = enter.append('div')
-            .attr('class', 'telenav-wrap');
-        var telenavWrap = telenavWrapPanel.append('div')
-            .attr('class', 'telenavwrap');
-
-        //  START 3rd container div
-        var userWindow = telenavWrap.append('div')
-            .attr('id', 'userWindow')
-            .attr('class', 'entity-editor-pane pane');
-        var userWindowHeader = userWindow.append('div')
-            .attr('class', 'header fillL cf');
-        //userWindowHeader.append('button')
-        //    .attr('class', 'fr preset-reset')
-        //    .on('click', function() {
-        //        _editPanel.deselectAll();
-        //        render(d3.select('.layer-telenav'));
-        //        //telenavWrap.transition()
-        //        //    .style('transform', 'translate3d(0px, 0px, 0px)');
-        //    })
-        //    .append('span')
-        //    .html('&#9658;');
-
-        userWindowHeader.append('h3')
-            .attr('class', 'main-header')
-            .text('Improve OSM panel');
-        var backDeselectWrapper = userWindowHeader.append('div')
-            .attr('class', 'button-wrap single joined fr')
-        backDeselectWrapper.append('button')
-            .attr('class', 'telenav-back telenav-header-button')
-            .attr('id', 'telenav-back')
-            .on('click', function(){
-                _editPanel.deselectAll();
-                render(d3.select('.layer-telenav'));
-            })
-            .append('span')
-            .text('Back / Deselect');
-        var userWindowBody = userWindow.append('div')
-            .attr('class', 'telenav-body');
-        var userWindowInner = userWindowBody.append('div')
-            .attr('class', 'inspector-border inspector-preset')
-            .append('div');
-        var userContainer = userWindowInner.append('div')
-            .attr('class', 'preset-form inspector-inner');
-        var multipleTR_form = userContainer.append('div')
-            .attr('class', 'form-field')
-            .attr('id', 'siblingsPanel');
-        multipleTR_form.append('label')
-            .attr('class', 'form-label')
-            .text('Possible Turn Restrictions:')
-            .append('div')
-            .attr('class', 'form-label-button-wrap');
-
-        var multipleTR_formWrap = multipleTR_form.append('form')
-            .attr('class', 'filterForm optionsContainer trList')
-            .append('ul')
-            .attr('id', 'siblingsList');
-
-        var detailedInfo_form = userContainer.append('div')
-            .attr('class', 'form-field');
-        detailedInfo_form.append('label')
-            .attr('class', 'form-label')
-            .text('Detailed Information')
-            .append('div')
-            .attr('class', 'form-label-button-wrap');
-
-        detailedInfo_form.append('form')
-            .attr('class', 'filterForm optionsContainer itemDetails');
-
-        var statusUpdate_form = userContainer.append('div')
-            .attr('class', 'form-field');
-        statusUpdate_form.append('label')
-            .attr('class', 'form-label')
-            .text('Change Status')
-            .append('div')
-            .attr('class', 'form-label-button-wrap');
-        var statusUpdate_formWrap = statusUpdate_form.append('form')
-            .attr('class', 'filterForm optionsContainer');
-        var statusUpdate_openContainer = statusUpdate_formWrap.append('div')
-            .attr('class', 'tel_displayInline')
-            .attr('id', 'setOpen');
-        statusUpdate_openContainer.append('input')
-            .attr('id', 'ch_open')
-            .attr('name', 'changeStatus')
-            .attr('value', 'OPEN')
-            .attr('type', 'radio');
-        statusUpdate_openContainer.append('label')
-            .attr('for', 'ch_open')
-            .text('Open');
-        var statusUpdate_solvedContainer = statusUpdate_formWrap.append('div')
-            .attr('class', 'tel_displayInline')
-            .attr('id', 'setSolved');
-        statusUpdate_solvedContainer.append('input')
-            .attr('id', 'ch_solved')
-            .attr('name', 'changeStatus')
-            .attr('value', 'SOLVED')
-            .attr('type', 'radio');
-        statusUpdate_solvedContainer.append('label')
-            .attr('for', 'ch_solved')
-            .text('Solved');
-        var statusUpdate_invalidContainer = statusUpdate_formWrap.append('div')
-            .attr('class', 'tel_displayInline')
-            .attr('id', 'setInvalid');
-        statusUpdate_invalidContainer.append('input')
-            .attr('id', 'ch_invalid')
-            .attr('name', 'changeStatus')
-            .attr('value', 'INVALID')
-            .attr('type', 'radio');
-        statusUpdate_invalidContainer.append('label')
-            .attr('for', 'ch_invalid')
-            .text('Invalid');
-
-        var comments_form = userContainer.append('div')
-            .attr('class', 'form-field');
-        comments_form.append('label')
-            .attr('class', 'form-label')
-            .text('Comment')
-            .append('div')
-            .attr('class', 'form-label-button-wrap')
-            .append('button')
-            .attr('class', 'save-icon')
-            .attr('id', 'saveComment')
-            .call(iD.svg.Icon('#icon-save'));
-        comments_form.append('textarea')
-            .attr('class', 'commentText')
-            .attr('maxLength', '600')
-            .attr('id', 'commentText');
-
-        //  END 3rd container div
-
-        //  START 1st container div
-        var generalSettingsWindow = telenavWrap.append('div')
-            .attr('id', 'generalSettingsWindow')
-            .attr('class', 'entity-editor-pane pane pane-middle');
-        var generalWindowsWindowHeader = generalSettingsWindow.append('div')
-            .attr('class', 'header fillL cf');
-        //generalWindowsWindowHeader.append('button')
-        //    .attr('class', 'fr preset-reset')
-        //    .on('click', function() {
-        //        _editPanel.goToMore();
-        //        //telenavWrap.transition()
-        //        //    .style('transform', 'translate3d(-' + panelWidth() + 'px, 0px,  0px)');
-        //    })
-        //    .append('span')
-        //    .html('&#9658;');
-        generalWindowsWindowHeader.append('h3')
-            .attr('class', 'main-header')
-            .text('Improve OSM panel');
-        var switchWrapper = generalWindowsWindowHeader.append('div')
-            .attr('class', 'button-wrap joined fr')
-        switchWrapper.append('button')
-            .attr('class', 'telenav-header-button active')
-            .attr('id', 'telenav-active')
-            .append('span')
-            .text('Active');
-        switchWrapper.append('button')
-            .attr('class', 'telenav-header-button inactive selected')
-            .attr('id', 'telenav-inactive')
-            .append('span')
-            .text('Inactive');
-        var generalSettingsBody = generalSettingsWindow.append('div')
-            .attr('class', 'telenav-body');
-
-        var containerBorder = generalSettingsBody.append('div')
-            .attr('class', 'inspector-border inspector-preset')
-            .append('div');
-        var presetFormContainer = containerBorder.append('div')
-            .attr('class', 'preset-form inspector-inner');
-
-        var presetForm = presetFormContainer.append('div')
-            .attr('class', 'form-field');
-        presetForm.append('label')
-            .attr('class', 'form-label')
-            .text('Reported Status');
-        var statusForm = presetForm.append('form')
-            .attr('class', 'filterForm optionsContainer')
-            .attr('id', 'statusFilter');
-        var statusDivOpen = statusForm.append('div')
-            .attr('class', 'tel_displayInline');
-        statusDivOpen.append('label')
-            .attr('for', 'OPEN')
-            .text('open');
-        statusDivOpen.append('input')
-            .attr('type', 'radio')
-            .attr('id', 'OPEN')
-            .attr('class', 'filterItem')
-            .attr('name', 'filter')
-            .attr('checked', 'checked');
-
-        var statusDivSolved = statusForm.append('div')
-            .attr('class', 'tel_displayInline');
-        statusDivSolved.append('label')
-            .attr('for', 'SOLVED')
-            .text('solved');
-        statusDivSolved.append('input')
-            .attr('type', 'radio')
-            .attr('id', 'SOLVED')
-            .attr('class', 'filterItem')
-            .attr('name', 'filter');
-
-        var statusDivInvalid = statusForm.append('div')
-            .attr('class', 'tel_displayInline');
-        statusDivInvalid.append('label')
-            .attr('for', 'INVALID')
-            .text('invalid');
-        statusDivInvalid.append('input')
-            .attr('type', 'radio')
-            .attr('id', 'INVALID')
-            .attr('class', 'filterItem')
-            .attr('name', 'filter');
-        //  END 1st container div
-
-        //  START 2st container div
-        //var optionsWindow = telenavWrap.append('div')
-        //    .attr('id', 'optionsWindow')
-        //    .attr('class', 'entity-editor-pane pane');
-        //var optionsWindowHeader = optionsWindow.append('div')
-        //    .attr('class', 'header fillL cf');
-        //optionsWindowHeader.append('button')
-        //    .attr('class', 'fl preset-reset preset-choose')
-        //    .on('click', function() {
-        //        _editPanel.goToMain();
-        //    })
-        //    .append('span')
-        //    .html('&#9668;');
-        //
-        //optionsWindowHeader.append('h3')
-        //    .text('Telenav Layers');
-        //var optionsWindowBody = optionsWindow.append('div')
-        //    .attr('class', 'telenav-body');
-        //var optionsWindowInner = optionsWindowBody.append('div')
-        //    .attr('class', 'inspector-border inspector-preset')
-        //    .append('div');
-        //var optionsContainer = optionsWindowInner.append('div')
-        //    .attr('class', 'preset-form inspector-inner');
-
-        var direction_form = presetFormContainer.append('div')
-            .attr('class', 'form-field')
-            .attr('id', 'dofFilter');
-        var owHeadWrap = direction_form.append('label')
-            .attr('class', 'form-label')
-            .attr('for', 'oneWay')
-            .text('One Way')
-            .append('div')
-            .attr('class', 'form-label-button-wrap')
-            owHeadWrap.append('span').append('i')
-                .attr('id', 'telenav-oneWay-headerDot');
-            owHeadWrap.append('div')
-            .attr('class', 'input')
-            .append('input')
-            .attr('type', 'checkbox')
-            .attr('checked', 'checked')
-            .attr('class', 'filterActivation')
-            .attr('id', 'oneWay');
-        var direction_formWrap = direction_form.append('form')
-            .attr('class', 'filterForm optionsContainer');
-        var direction_highlyProbableContainer = direction_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        direction_highlyProbableContainer.append('input')
-            .attr('id', 'C1')
-            .attr('type', 'checkbox')
-            .attr('checked', 'checked');
-        direction_highlyProbableContainer.append('label')
-            .attr('for', 'C1')
-            .text('Highly Probable');
-        var direction_mostLikelyContainer = direction_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        direction_mostLikelyContainer.append('input')
-            .attr('id', 'C2')
-            .attr('type', 'checkbox')
-            //.attr('checked', 'checked');
-        direction_mostLikelyContainer.append('label')
-            .attr('for', 'C2')
-            .text('Most Likely');
-        var direction_probableContainer = direction_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        direction_probableContainer.append('input')
-            .attr('id', 'C3')
-            .attr('type', 'checkbox')
-            //.attr('checked', 'checked');
-        direction_probableContainer.append('label')
-            .attr('for', 'C3')
-            .text('Probable');
-
-        var missing_form = presetFormContainer.append('div')
-            .attr('class', 'form-field')
-            .attr('id', 'mrFilter');
-        var mrHeadWrap = missing_form.append('label')
-            .attr('class', 'form-label')
-            .attr('for', 'missingRoadType')
-            .text('Missing roads')
-            .append('div')
-            .attr('class', 'form-label-button-wrap')
-            mrHeadWrap.append('span').append('i')
-                .attr('id', 'telenav-missingRoad-headerDot');
-            mrHeadWrap.append('div')
-            .attr('class', 'input')
-            .append('input')
-            .attr('type', 'checkbox')
-            .attr('checked', 'checked')
-            .attr('class', 'filterActivation')
-            .attr('id', 'missingRoads');
-        var missing_formWrap = missing_form.append('form')
-            .attr('class', 'filterForm optionsContainer');
-        var missing_roadContainer = missing_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        missing_roadContainer.append('input')
-            .attr('id', 'ROAD')
-            .attr('type', 'checkbox')
-            .attr('checked', 'checked');
-        missing_roadContainer.append('label')
-            .attr('id', 'telenav_roadMr')
-            .attr('for', 'ROAD')
-            .text('Road');
-        var missing_parkingContainer = missing_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        missing_parkingContainer.append('input')
-            .attr('id', 'PARKING')
-            .attr('type', 'checkbox')
-            //.attr('checked', 'checked');
-        missing_parkingContainer.append('label')
-            .attr('id', 'telenav_parkingMr')
-            .attr('for', 'PARKING')
-            .text('Parking');
-        var missing_bothContainer = missing_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        missing_bothContainer.append('input')
-            .attr('id', 'BOTH')
-            .attr('type', 'checkbox')
-            //.attr('checked', 'checked');
-        missing_bothContainer.append('label')
-            .attr('id', 'telenav_bothMr')
-            .attr('for', 'BOTH')
-            .text('Both');
-        missing_formWrap.append('label')
-            .attr('class', 'form-subLabel tel_displayBlock')
-            .text('Filters');
-        var missing_waterContainer = missing_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        missing_waterContainer.append('input')
-            .attr('id', 'WATER')
-            .attr('type', 'checkbox')
-            //.attr('checked', 'checked');
-        missing_waterContainer.append('label')
-            .attr('id', 'telenav_waterMr')
-            .attr('for', 'WATER')
-            .text('Water Trail');
-        var missing_pathContainer = missing_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        missing_pathContainer.append('input')
-            .attr('id', 'PATH')
-            .attr('type', 'checkbox')
-            //.attr('checked', 'checked');
-        missing_pathContainer.append('label')
-            .attr('id', 'telenav_pathMr')
-            .attr('for', 'PATH')
-            .text('Path Trail');
-
-
-        var restriction_form = presetFormContainer.append('div')
-            .attr('class', 'form-field')
-            .attr('id', 'trFilter');
-        var trHeadWrap = restriction_form.append('label')
-            .attr('class', 'form-label')
-            .attr('for', 'missingRoads')
-            .text('Turn Restriction')
-            .append('div')
-            .attr('class', 'form-label-button-wrap');
-        trHeadWrap.append('span').append('i')
-            .attr('id', 'telenav-turnRestriction-headerDot');
-        trHeadWrap.append('div')
-            .attr('class', 'input')
-            .append('input')
-            .attr('type', 'checkbox')
-            .attr('checked', 'checked')
-            .attr('class', 'filterActivation')
-            .attr('id', 'turnRestriction');
-        var restriction_formWrap = restriction_form.append('form')
-            .attr('class', 'filterForm optionsContainer');
-        var restriction_highlyProbableContainer = restriction_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        restriction_highlyProbableContainer.append('input')
-            .attr('id', 'C1')
-            .attr('type', 'checkbox')
-            .attr('checked', 'checked');
-        restriction_highlyProbableContainer.append('label')
-            .attr('for', 'C1')
-            .text('Highly Probable');
-        var restriction_probableContainer = restriction_formWrap.append('div')
-            .attr('class', 'tel_displayInline');
-        restriction_probableContainer.append('input')
-            .attr('id', 'C2')
-            .attr('type', 'checkbox')
-            //.attr('checked', 'checked');
-        restriction_probableContainer.append('label')
-            .attr('for', 'C2')
-            .text('Probable');
-        //  END 2st container div
-
-        // ++++++++++++
-        // events
-        // ++++++++++++
-
-
-        //d3.select('.toggleEditModeContainer').on('click', function() {
-        //    if (d3.select('.layer-telenav').classed('editMode')) {
-        //        d3.select('.layer-telenav').classed('editMode', false);
-        //    } else {
-        //        d3.select('.layer-telenav').classed('editMode', true);
-        //    }
-        //});
-
-        d3.select('#oneWay').on('click', function() {
-            if (d3.select('#oneWay').property('checked')) {
-                selectedTypes.push('dof');
-                //---
-                dofSelectedDetails = dofDetails.slice(0);
-                d3.select('#dofFilter #C1').property('checked', true);
-                d3.select('#dofFilter #C2').property('checked', true);
-                d3.select('#dofFilter #C3').property('checked', true);
-            } else {
-                selectedTypes.splice(selectedTypes.indexOf('dof'), 1);
-                //---
-                dofSelectedDetails.length = 0;
-                d3.select('#dofFilter #C1').property('checked', false);
-                d3.select('#dofFilter #C2').property('checked', false);
-                d3.select('#dofFilter #C3').property('checked', false);
-            }
-            render(d3.select('.layer-telenav'));
-        });
-
-        d3.selectAll('#dofFilter form input').on('click', function() {
-            var allCheckboxes = d3.selectAll('#dofFilter form input')[0];
-            if (d3.select('#dofFilter #' + d3.event.target.id).property('checked')) {
-                if (!d3.select('#oneWay').property('checked')) {
-                    d3.select('#oneWay').property('checked', true);
-                    selectedTypes.push('dof');
-                }
-                dofSelectedDetails.push(d3.event.target.id);
-            } else {
-                var noneSelected = true;
-                var checkedItems = d3.selectAll('#dofFilter form input:checked')[0];
-                if (checkedItems.length == 0) {
-                    d3.select('#oneWay').property('checked', false);
-                    selectedTypes.splice(selectedTypes.indexOf('dof'), 1);
-                }
-                dofSelectedDetails.splice(dofSelectedDetails.indexOf(d3.event.target.id), 1);
-            }
-            render(d3.select('.layer-telenav'));
-        });
-
-        d3.selectAll('#mrFilter form input').on('click', function() {
-            var allCheckboxes = d3.selectAll('#mrFilter form input')[0];
-            if (d3.select('#mrFilter #' + d3.event.target.id).property('checked')) {
-                if (!d3.select('#missingRoads').property('checked')) {
-                    d3.select('#missingRoads').property('checked', true);
-                    selectedTypes.push('mr');
-                }
-                mrSelectedDetails.push(d3.event.target.id);
-            } else {
-                var noneSelected = true;
-                var checkedItems = d3.selectAll('#mrFilter form input:checked')[0];
-                if (checkedItems.length == 0) {
-                    d3.select('#missingRoads').property('checked', false);
-                    selectedTypes.splice(selectedTypes.indexOf('mr'), 1);
-                }
-                mrSelectedDetails.splice(mrSelectedDetails.indexOf(d3.event.target.id), 1);
-            }
-            render(d3.select('.layer-telenav'));
-        });
-
-        d3.selectAll('#trFilter form input').on('click', function() {
-            var allCheckboxes = d3.selectAll('#trFilter form input')[0];
-            if (d3.select('#trFilter #' + d3.event.target.id).property('checked')) {
-                if (!d3.select('#turnRestriction').property('checked')) {
-                    d3.select('#turnRestriction').property('checked', true);
-                    selectedTypes.push('tr');
-                }
-                trSelectedDetails.push(d3.event.target.id);
-            } else {
-                var noneSelected = true;
-                var checkedItems = d3.selectAll('#trFilter form input:checked')[0];
-                if (checkedItems.length == 0) {
-                    d3.select('#turnRestriction').property('checked', false);
-                    selectedTypes.splice(selectedTypes.indexOf('tr'), 1);
-                }
-                trSelectedDetails.splice(trSelectedDetails.indexOf(d3.event.target.id), 1);
-            }
-            render(d3.select('.layer-telenav'));
-        });
-
-        d3.select('#missingRoads').on('click', function() {
-            if (d3.select('#missingRoads').property('checked')) {
-                selectedTypes.push('mr');
-                //---
-                mrSelectedDetails = mrDetails.slice(0);
-                d3.select('#mrFilter #ROAD').property('checked', true);
-                d3.select('#mrFilter #PARKING').property('checked', true);
-                d3.select('#mrFilter #BOTH').property('checked', true);
-                d3.select('#mrFilter #WATER').property('checked', true);
-                d3.select('#mrFilter #PATH').property('checked', true);
-            } else {
-                selectedTypes.splice(selectedTypes.indexOf('mr'), 1);
-                //---
-                mrSelectedDetails.length = 0;
-                d3.select('#mrFilter #ROAD').property('checked', false);
-                d3.select('#mrFilter #PARKING').property('checked', false);
-                d3.select('#mrFilter #BOTH').property('checked', false);
-                d3.select('#mrFilter #WATER').property('checked', false);
-                d3.select('#mrFilter #PATH').property('checked', false);
-            }
-            render(d3.select('.layer-telenav'));
-        });
-
-        d3.select('#turnRestriction').on('click', function() {
-            if (d3.select('#turnRestriction').property('checked')) {
-                selectedTypes.push('tr');
-                //---
-                trSelectedDetails = trDetails.slice(0);
-                d3.select('#trFilter #C1').property('checked', true);
-                d3.select('#trFilter #C2').property('checked', true);
-            } else {
-                selectedTypes.splice(selectedTypes.indexOf('tr'), 1);
-                //---
-                trSelectedDetails.length = 0;
-                d3.select('#trFilter #C1').property('checked', false);
-                d3.select('#trFilter #C2').property('checked', false);
-            }
-            render(d3.select('.layer-telenav'));
-        });
-
-        d3.selectAll('#statusFilter input').on('click', function() {
-            status = d3.event.currentTarget.id;
-            render(d3.select('.layer-telenav'));
-        });
-
-        d3.select('#saveComment').on('click', _editPanel.saveComment);
-
-        d3.select('#setSolved').on('click', function() {
-            _editPanel.setStatus.call(_editPanel, 'SOLVED');
-        });
-        d3.select('#setOpen').on('click', function() {
-            _editPanel.setStatus.call(_editPanel, 'OPEN');
-        });
-        d3.select('#setInvalid').on('click', function() {
-            _editPanel.setStatus.call(_editPanel, 'INVALID');
-        });
-
-    }();
 
     return render;
 };
